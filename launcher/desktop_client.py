@@ -178,7 +178,7 @@ class DesktopClient:
         if not result.ok:
             message = format_check_result(result)
             self.set_html("环境检查失败", f"<pre>{message}</pre>")
-            show_error_popup("AndroidAutoClient 环境检查失败", message)
+            show_error_popup("AutoFans 环境检查失败", message)
             return
 
         self.set_html("正在启动服务", "请稍等，客户端正在启动 API、Web、Appium 和业务客户端。")
@@ -190,7 +190,7 @@ class DesktopClient:
             return
 
         self.set_html("服务启动失败", f"请查看日志：<pre>{self.log_path}</pre>")
-        show_error_popup("AndroidAutoClient 服务启动失败", f"服务未能全部启动，请查看日志：\n{self.log_path}")
+        show_error_popup("AutoFans 服务启动失败", f"服务未能全部启动，请查看日志：\n{self.log_path}")
 
     def on_closed(self) -> None:
         self.stop_requested = True

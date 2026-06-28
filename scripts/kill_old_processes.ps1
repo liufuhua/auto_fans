@@ -18,7 +18,6 @@ $targets = Get-CimInstance Win32_Process | Where-Object {
         ($name -in @(
             "python.exe",
             "node.exe",
-            "AndroidAutoClient.exe",
             "AutoFans.exe",
             "AutoFansStart.exe",
             "AutoFansFinish.exe"
