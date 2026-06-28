@@ -32,7 +32,7 @@ class FinishLauncher:
         if not script.exists():
             message = f"Missing finish script: {script}"
             self.log(message)
-            show_error_popup("AndroidAutoFinish failed", message)
+            show_error_popup("AutoFansFinish failed", message)
             return 1
 
         command = [

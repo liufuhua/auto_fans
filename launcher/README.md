@@ -28,12 +28,12 @@ $env:LAUNCHER_PYTHON = "C:\Path\To\python.exe"
 Generated files:
 
 ```text
-AndroidAutoClient.exe
-AndroidAutoStart.exe
-AndroidAutoFinish.exe
+AutoFans.exe
+AutoFansStart.exe
+AutoFansFinish.exe
 ```
 
-`AndroidAutoClient.exe` is the normal desktop entry. It opens a WebView window,
+`AutoFans.exe` is the normal desktop entry. It opens a WebView window,
 starts all local services without command windows, and stops all services when
 the client window closes.
 
@@ -56,7 +56,7 @@ logs\launcher\service_status.json
 These commands do not start or stop services:
 
 ```powershell
-.\AndroidAutoStart.exe --check-only --no-popup
-.\AndroidAutoStart.exe --status-only
-.\AndroidAutoFinish.exe --status-only
+.\AutoFansStart.exe --check-only --no-popup
+.\AutoFansStart.exe --status-only
+.\AutoFansFinish.exe --status-only
 ```

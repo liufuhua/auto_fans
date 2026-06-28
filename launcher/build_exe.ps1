@@ -69,13 +69,13 @@ try {
     & $pythonPath -m PyInstaller `
         --onefile `
         --console `
-        --name AndroidAutoStart `
+        --name AutoFansStart `
         launcher\start_launcher.py
 
     & $pythonPath -m PyInstaller `
         --onefile `
         --console `
-        --name AndroidAutoFinish `
+        --name AutoFansFinish `
         launcher\finish_launcher.py
 
     & $pythonPath -m PyInstaller `
@@ -86,8 +86,8 @@ try {
         launcher\desktop_client.py
 
     if ($CopyToRoot) {
-        Copy-Item -LiteralPath "dist\AndroidAutoStart.exe" -Destination "AndroidAutoStart.exe" -Force
-        Copy-Item -LiteralPath "dist\AndroidAutoFinish.exe" -Destination "AndroidAutoFinish.exe" -Force
+        Copy-Item -LiteralPath "dist\AutoFansStart.exe" -Destination "AutoFansStart.exe" -Force
+        Copy-Item -LiteralPath "dist\AutoFansFinish.exe" -Destination "AutoFansFinish.exe" -Force
         Copy-Item -LiteralPath "dist\AutoFans.exe" -Destination "AutoFans.exe" -Force
     }
 }

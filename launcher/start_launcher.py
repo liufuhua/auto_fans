@@ -50,7 +50,7 @@ class Launcher:
         result = run_environment_check(self.root)
         self.log(format_check_result(result))
         if not result.ok:
-            show_error_popup("AndroidAutoStart environment check failed", format_check_result(result))
+            show_error_popup("AutoFansStart environment check failed", format_check_result(result))
             return False
         if result.warnings:
             self.log("Environment check passed with warnings")
@@ -164,7 +164,7 @@ class Launcher:
                 if self.restart_count < MAX_RESTARTS:
                     self.restart_services()
                 else:
-                    show_error_popup("AndroidAutoStart service stopped", "Services stopped repeatedly. Please check launcher logs.")
+                    show_error_popup("AutoFansStart service stopped", "Services stopped repeatedly. Please check launcher logs.")
                     return 1
 
             status = self.poll_status()
@@ -175,7 +175,7 @@ class Launcher:
             elif not all_required_running(status) and self.restart_count < MAX_RESTARTS:
                 self.restart_services()
             elif not all_required_running(status):
-                show_error_popup("AndroidAutoStart service check failed", "One or more services are not running. Please check launcher logs.")
+                show_error_popup("AutoFansStart service check failed", "One or more services are not running. Please check launcher logs.")
                 return 1
 
             time.sleep(MONITOR_INTERVAL_SECONDS)

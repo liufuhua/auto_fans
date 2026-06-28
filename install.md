@@ -138,7 +138,7 @@ cd E:\auto_fans
 
 ```powershell
 cd E:\auto_fans
-.\AndroidAutoStart.exe --status-only
+.\AutoFansStart.exe --status-only
 ```
 
 ## 5. 重新打包 Windows 启动器

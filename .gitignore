@@ -33,6 +33,9 @@ logs/
 build/
 dist/
 *.spec
+!AutoFans.spec
+!AutoFansStart.spec
+!AutoFansFinish.spec
 *.exe
 *.lnk
 *.egg-info/

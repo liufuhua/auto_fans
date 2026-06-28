@@ -19,8 +19,9 @@ $targets = Get-CimInstance Win32_Process | Where-Object {
             "python.exe",
             "node.exe",
             "AndroidAutoClient.exe",
-            "AndroidAutoStart.exe",
-            "AndroidAutoFinish.exe"
+            "AutoFans.exe",
+            "AutoFansStart.exe",
+            "AutoFansFinish.exe"
         )) -and (
             $cmd -like "*$root*" -or
             $cmd -like "*uvicorn*app.main*" -or
