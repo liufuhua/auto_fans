@@ -199,15 +199,27 @@ def main() -> None:
     claim_response.raise_for_status()
     claim = claim_response.json()["data"]
     assert claim["hasTask"] is True
-    assert claim["taskId"] == task_id
-    assert claim["doctorId"] == doctor_id
-    assert claim["keywordId"] == keyword_id
-    task_item_id = claim["taskItemId"]
-    comment_bank_item_id = claim["commentBankItemId"]
-    print("claim ok")
+    assert any(doctor["doctorId"] == doctor_id for doctor in claim["doctors"])
+    print("home-feed claim ok")
+
+    comment_claim_response = client.post(
+        "/api/automation/tasks/matched-comment/claim",
+        json={
+            "udid": TEST_DEVICE_UDID,
+            "doctorId": doctor_id,
+            "publishAccount": "测试账号01",
+        },
+    )
+    comment_claim_response.raise_for_status()
+    comment_claim = comment_claim_response.json()["data"]
+    assert comment_claim["taskId"] == 1
+    assert comment_claim["doctorId"] == doctor_id
+    assert comment_claim["keywordId"] == keyword_id
+    comment_bank_item_id = comment_claim["commentBankItemId"]
+    print("matched comment claim ok")
 
     start_response = client.post(
-        f"/api/automation/tasks/{task_item_id}/start",
+        "/api/automation/tasks/1/start",
         json={
             "udid": TEST_DEVICE_UDID,
             "commentBankItemId": comment_bank_item_id,
@@ -219,7 +231,7 @@ def main() -> None:
     print(f"start ok: resultId={result_id}")
 
     report_response = client.post(
-        f"/api/automation/tasks/{task_item_id}/report",
+        "/api/automation/tasks/1/report",
         json={
             "udid": TEST_DEVICE_UDID,
             "resultId": result_id,
@@ -239,7 +251,7 @@ def main() -> None:
     results_response = client.get(
         "/api/automation-results",
         params={
-            "taskId": task_id,
+            "taskId": 1,
             "deviceId": device_id,
             "status": "success",
             "page": 1,
@@ -252,45 +264,18 @@ def main() -> None:
     assert any(item["id"] == result_id for item in results)
     print("automation result visible ok")
 
-    second_claim_response = client.post(
-        "/api/automation/tasks/claim",
-        json={"udid": TEST_DEVICE_UDID, "publishAccount": "测试账号01"},
-    )
-    second_claim_response.raise_for_status()
-    assert second_claim_response.json()["data"]["hasTask"] is False
-    print("duplicate claim blocked ok")
-
     add_unused_comment(doctor_id, keyword_id, "自动化预留接口同日重复评论内容")
-    same_day_task_id = create_task_for_date(
-        client,
-        headers,
-        task_date=TEST_TASK_DATE,
-        doctor_id=doctor_id,
-        keyword_id=keyword_id,
+    second_comment_claim_response = client.post(
+        "/api/automation/tasks/matched-comment/claim",
+        json={
+            "udid": TEST_DEVICE_UDID,
+            "doctorId": doctor_id,
+            "publishAccount": "测试账号01",
+        },
     )
-    same_day_claim_response = client.post(
-        "/api/automation/tasks/claim",
-        json={"udid": TEST_DEVICE_UDID, "publishAccount": "测试账号01"},
-    )
-    same_day_claim_response.raise_for_status()
-    assert same_day_claim_response.json()["data"]["hasTask"] is False
-    print(f"same-day duplicate blocked ok: taskId={same_day_task_id}")
-
-    add_unused_comment(doctor_id, keyword_id, "自动化预留接口次日评论内容")
-    next_day_task_id = create_task_for_date(
-        client,
-        headers,
-        task_date=TEST_NEXT_TASK_DATE,
-        doctor_id=doctor_id,
-        keyword_id=keyword_id,
-    )
-    next_day_claim_response = client.post(
-        "/api/automation/tasks/claim",
-        json={"udid": TEST_DEVICE_UDID, "publishAccount": "测试账号01"},
-    )
-    next_day_claim_response.raise_for_status()
-    assert next_day_claim_response.json()["data"]["hasTask"] is False
-    print(f"non-today task skipped ok: taskId={next_day_task_id}")
+    second_comment_claim_response.raise_for_status()
+    assert second_comment_claim_response.json()["data"]["commentBankItemId"] != comment_bank_item_id
+    print("next matched comment claim ok")
 
     cleanup_test_data()
 

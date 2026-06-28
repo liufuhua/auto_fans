@@ -11,6 +11,8 @@ from app.schemas.automation import (
     AutomationRuntimePayload,
     AutomationRuntimeResponse,
     AutomationServiceStatusResponse,
+    ClaimMatchedDoctorCommentPayload,
+    ClaimMatchedDoctorCommentResponse,
     ClaimTaskPayload,
     ClaimTaskResponse,
     DeviceHeartbeatPayload,
@@ -23,6 +25,7 @@ from app.schemas.automation import (
 from app.schemas.common import ApiResponse, ok
 from app.services.automation import (
     auto_stop_runtime,
+    claim_matched_doctor_comment,
     claim_task,
     get_runtime_state,
     heartbeat_device,
@@ -98,6 +101,17 @@ def claim(
     db: Annotated[Session, Depends(get_db)],
 ) -> ApiResponse[ClaimTaskResponse]:
     return ok(claim_task(db, payload))
+
+
+@router.post(
+    "/tasks/matched-comment/claim",
+    response_model=ApiResponse[ClaimMatchedDoctorCommentResponse],
+)
+def claim_matched_comment(
+    payload: ClaimMatchedDoctorCommentPayload,
+    db: Annotated[Session, Depends(get_db)],
+) -> ApiResponse[ClaimMatchedDoctorCommentResponse]:
+    return ok(claim_matched_doctor_comment(db, payload))
 
 
 @router.post("/tasks/{task_item_id}/start", response_model=ApiResponse[StartTaskResponse])

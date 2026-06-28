@@ -272,11 +272,25 @@ def center_y(element: Any) -> float:
     return float(rect["y"]) + float(rect["height"]) / 2
 
 
+def center_x(element: Any) -> float:
+    rect = element.rect
+    return float(rect["x"]) + float(rect["width"]) / 2
+
+
 def nearest_like_desc(author_element: Any, like_elements: list[Any]) -> str:
     if not like_elements:
         return ""
+    author_x = center_x(author_element)
     author_y = center_y(author_element)
-    nearest = min(like_elements, key=lambda item: abs(center_y(item) - author_y))
+    nearest = min(
+        like_elements,
+        key=lambda item: _like_distance_key(
+            author_x=author_x,
+            author_y=author_y,
+            like_x=center_x(item),
+            like_y=center_y(item),
+        ),
+    )
     return read_content_desc(nearest)
 
 
@@ -293,6 +307,18 @@ def _parse_bounds(bounds: str | None) -> tuple[int, int, int, int] | None:
 def _bounds_center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
     left, top, right, bottom = bounds
     return int((left + right) / 2), int((top + bottom) / 2)
+
+
+def _like_distance_key(
+    *,
+    author_x: float,
+    author_y: float,
+    like_x: float,
+    like_y: float,
+) -> tuple[float, int, float]:
+    horizontal_distance = abs(like_x - author_x)
+    is_left_of_author = int(like_x < author_x)
+    return abs(like_y - author_y), is_left_of_author, horizontal_distance
 
 
 class PageSourceTapTarget:
@@ -358,12 +384,17 @@ def _collect_matched_author_elements_from_source(
         matched = target_author in text
         if not matched:
             continue
-        _, author_y = _bounds_center(bounds)
+        author_x, author_y = _bounds_center(bounds)
         like_desc = ""
         if likes:
             like_desc = min(
                 likes,
-                key=lambda item: abs(_bounds_center(item[1])[1] - author_y),
+                key=lambda item: _like_distance_key(
+                    author_x=author_x,
+                    author_y=author_y,
+                    like_x=_bounds_center(item[1])[0],
+                    like_y=_bounds_center(item[1])[1],
+                ),
             )[0]
         liked = (
             "已点赞" in like_desc

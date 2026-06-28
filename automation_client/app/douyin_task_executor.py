@@ -15,6 +15,8 @@ from app.api_client import (
     AutomationApiClient,
     AutomationApiError,
     AutomationTimingSettingResult,
+    ClaimMatchedDoctorCommentResult,
+    ClaimTaskDoctorResult,
     ClaimTaskResult,
     StartTaskResult,
 )
@@ -28,6 +30,7 @@ from app.douyin_page_state import (
     has_link_copied_popup,
     has_search_page,
     has_video_back,
+    is_home_feed_page,
     is_home_page,
     press_android_back,
     safe_click,
@@ -89,6 +92,23 @@ class SearchResultNotFoundError(RuntimeError):
 
 SEARCH_TAB_WORDS = ("综合", "视频", "用户", "直播", "商品", "地点", "图文", "经验", "问答")
 BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
+HOME_FEED_AUTHOR_TITLE_ID = "com.ss.android.ugc.aweme:id/title"
+HOME_FEED_AUTHOR_AVATAR_ID = "com.ss.android.ugc.aweme:id/user_avatar"
+HOME_FEED_AUTHOR_NOISE_WORDS = {
+    "视频",
+    "首页",
+    "推荐",
+    "关注",
+    "朋友",
+    "商城",
+    "消息",
+    "我",
+    "搜索",
+    "评论",
+    "分享",
+    "收藏",
+    "喜欢",
+}
 
 
 @dataclass(frozen=True)
@@ -192,6 +212,14 @@ class DouyinAppiumTaskExecutor:
         device: BackendDeviceConfig,
         api_client: AutomationApiClient,
     ) -> TaskExecutionResult:
+        if task.doctors:
+            return self._execute_home_feed_task(
+                task=task,
+                start_result=start_result,
+                device=device,
+                api_client=api_client,
+            )
+
         keyword = task.search_word or task.keyword
         if not keyword:
             raise RuntimeError("领取到的任务缺少关键词")
@@ -343,6 +371,328 @@ class DouyinAppiumTaskExecutor:
             quit_with_timeout(active_driver, args.quit_timeout_seconds)
             self._clear_appium_session(args)
 
+    def _execute_home_feed_task(
+        self,
+        *,
+        task: ClaimTaskResult,
+        start_result: StartTaskResult,
+        device: BackendDeviceConfig,
+        api_client: AutomationApiClient,
+    ) -> TaskExecutionResult:
+        if not task.doctors:
+            raise RuntimeError("claimed home-feed task missing doctors")
+        publish_account = (task.publish_account or "").strip()
+        if not publish_account:
+            raise RuntimeError("claimed home-feed task missing publish account")
+
+        active_config = self._config_with_backend_timing(api_client)
+        args = self._build_args(device, config=active_config)
+        app_path = str(Path(args.app).resolve()) if args.app else None
+        appium_device = AppiumDeviceConfig(
+            udid=device.udid,
+            system_port=device.system_port,
+            device_name=device.name,
+            appium_server_url=device.appium_server_url,
+            app=app_path,
+            app_package=args.package_name,
+            app_activity=args.app_activity,
+        )
+        doctor_names = ", ".join(doctor.doctor_name for doctor in task.doctors)
+        log_step(
+            "worker claimed home-feed task: "
+            f"device={device.name}, resultId={start_result.result_id}, "
+            f"doctors={doctor_names}, deviceModel={device.device_model}, "
+            f"server={device.appium_server_url or active_config.appium_server_url}"
+        )
+        managed_driver = self.driver_factory.create(appium_device)
+        active_driver = managed_driver.driver
+        self._configure_driver(active_driver)
+        waits: dict[str, float] = {}
+        try:
+            actions = self._build_actions(
+                driver=active_driver,
+                args=args,
+                task_id="worker_home_feed_task",
+            )
+            active_driver = self._ensure_douyin_home_page(
+                driver=active_driver,
+                actions=actions,
+                args=args,
+            )
+            for attempt in range(args.max_swipes + 1):
+                actions = self._build_actions(
+                    driver=active_driver,
+                    args=args,
+                    task_id=f"worker_home_feed_task_{attempt}",
+                )
+                self._watch_home_feed_video(args=args, waits=waits)
+                author_name = self._get_home_feed_video_author_name(active_driver)
+                matched_doctor = self._match_home_feed_doctor(task.doctors, author_name)
+                if matched_doctor is None:
+                    log_step(f"home-feed author not matched: author={author_name}")
+                    if attempt >= args.max_swipes:
+                        break
+                    active_driver = self._swipe_to_next_home_feed_video(
+                        driver=active_driver,
+                        actions=actions,
+                        args=args,
+                    )
+                    continue
+
+                log_step(
+                    "home-feed author matched: "
+                    f"author={author_name}, doctor={matched_doctor.doctor_name}"
+                )
+                active_driver = self._execute_home_feed_matched_comment(
+                    driver=active_driver,
+                    actions=actions,
+                    args=args,
+                    waits=waits,
+                    api_client=api_client,
+                    device=device,
+                    matched_doctor=matched_doctor,
+                    author_name=author_name,
+                    publish_account=publish_account,
+                )
+                active_driver = self._swipe_to_next_home_feed_video(
+                    driver=active_driver,
+                    actions=self._build_actions(
+                        driver=active_driver,
+                        args=args,
+                        task_id=f"worker_home_feed_task_after_match_{attempt}",
+                    ),
+                    args=args,
+                )
+                return TaskExecutionResult.no_report()
+
+            return TaskExecutionResult.no_report()
+        finally:
+            quit_with_timeout(active_driver, args.quit_timeout_seconds)
+            self._clear_appium_session(args)
+
+    def _watch_home_feed_video(
+        self,
+        *,
+        args: argparse.Namespace,
+        waits: dict[str, float],
+    ) -> None:
+        waits["watch_video"] = random_seconds(
+            args.watch_min_seconds,
+            args.watch_max_seconds,
+            "watch home-feed video",
+        )
+        time.sleep(waits["watch_video"])
+
+    def _get_home_feed_video_author_name(self, driver) -> str:
+        candidates = self._author_candidates_from_source(get_page_source(driver))
+        if candidates:
+            return candidates[0]
+        return ""
+
+    @staticmethod
+    def _author_candidates_from_source(source: str) -> list[str]:
+        title_candidates: list[str] = []
+        avatar_candidates: list[str] = []
+        at_text_candidates: list[str] = []
+        fallback_candidates: list[str] = []
+        try:
+            root = ET.fromstring(source)
+        except ET.ParseError:
+            return []
+
+        def append_unique(items: list[str], value: str) -> None:
+            if value and value not in items:
+                items.append(value)
+
+        for node in root.iter():
+            resource_id = str(node.attrib.get("resource-id") or "").strip()
+            text = str(node.attrib.get("text") or "").strip()
+            content_desc = str(node.attrib.get("content-desc") or "").strip()
+
+            if resource_id == HOME_FEED_AUTHOR_TITLE_ID:
+                append_unique(title_candidates, DouyinAppiumTaskExecutor._normalize_home_feed_author(text))
+                continue
+
+            if resource_id == HOME_FEED_AUTHOR_AVATAR_ID:
+                append_unique(
+                    avatar_candidates,
+                    DouyinAppiumTaskExecutor._normalize_home_feed_author(content_desc),
+                )
+                continue
+
+            for value in (text, content_desc):
+                normalized = DouyinAppiumTaskExecutor._normalize_home_feed_author(value)
+                if not normalized:
+                    continue
+                if value.startswith("@"):
+                    append_unique(at_text_candidates, normalized)
+                elif not DouyinAppiumTaskExecutor._is_home_feed_author_noise(normalized):
+                    append_unique(fallback_candidates, normalized)
+
+        candidates: list[str] = []
+        for group in (title_candidates, avatar_candidates, at_text_candidates, fallback_candidates):
+            for candidate in group:
+                if not DouyinAppiumTaskExecutor._is_home_feed_author_noise(candidate):
+                    append_unique(candidates, candidate)
+        return candidates
+
+    @staticmethod
+    def _normalize_home_feed_author(value: str) -> str:
+        return value.strip().lstrip("@").strip()
+
+    @staticmethod
+    def _is_home_feed_author_noise(value: str) -> bool:
+        text = value.strip()
+        if not text:
+            return True
+        if text in HOME_FEED_AUTHOR_NOISE_WORDS:
+            return True
+        return text.endswith("按钮") or text.startswith("点击") or text.startswith("暂停")
+
+    @staticmethod
+    def _match_home_feed_doctor(
+        doctors: list[ClaimTaskDoctorResult],
+        author_name: str,
+    ) -> ClaimTaskDoctorResult | None:
+        author = author_name.strip()
+        if not author:
+            return None
+        for doctor in doctors:
+            nickname = doctor.doctor_name.strip()
+            if nickname and nickname in author:
+                return doctor
+        return None
+
+    def _swipe_to_next_home_feed_video(
+        self,
+        *,
+        driver,
+        actions: DouyinActions,
+        args: argparse.Namespace,
+    ):
+        actions.swipe_up(percent=args.swipe_percent)
+        wait_seconds = random_seconds(
+            args.after_swipe_min_seconds,
+            args.after_swipe_max_seconds,
+            "after home-feed swipe",
+        )
+        time.sleep(wait_seconds)
+        return self._reconnect_driver(args=args, driver=driver)
+
+    def _execute_home_feed_matched_comment(
+        self,
+        *,
+        driver,
+        actions: DouyinActions,
+        args: argparse.Namespace,
+        waits: dict[str, float],
+        api_client: AutomationApiClient,
+        device: BackendDeviceConfig,
+        matched_doctor: ClaimTaskDoctorResult,
+        author_name: str,
+        publish_account: str,
+    ):
+        comment_claim = api_client.claim_matched_doctor_comment(
+            udid=device.udid,
+            doctor_id=matched_doctor.doctor_id,
+            publish_account=publish_account,
+        )
+        start_result = api_client.start_task(
+            task_item_id=comment_claim.task_id,
+            udid=device.udid,
+            comment_bank_item_id=comment_claim.comment_bank_item_id,
+            publish_account=publish_account,
+        )
+        like_success, driver = self._like_video_and_reconnect(
+            actions=actions,
+            args=args,
+            waits=waits,
+        )
+        actions = self._build_actions(
+            driver=driver,
+            args=args,
+            task_id="worker_home_feed_task_before_favorite",
+        )
+        favorite_success, driver = self._favorite_video_and_reconnect(
+            actions=actions,
+            args=args,
+            waits=waits,
+        )
+        actions = self._build_actions(
+            driver=driver,
+            args=args,
+            task_id="worker_home_feed_task_before_share",
+        )
+        share_success, video_link, driver = self._share_video_and_reconnect(
+            actions=actions,
+            args=args,
+        )
+        actions = self._build_actions(
+            driver=driver,
+            args=args,
+            task_id="worker_home_feed_task_before_comment",
+        )
+        driver = self._comment_video_and_reconnect(
+            actions=actions,
+            args=args,
+            comment=comment_claim.comment_content,
+            waits=waits,
+            send_comment=self.config.send_comment_enabled,
+            force_stop_after_comment=False,
+        )
+        summary = self._build_home_feed_result_summary(
+            comment_claim=comment_claim,
+            author_name=author_name,
+            like_success=like_success,
+            favorite_success=favorite_success,
+            share_success=share_success,
+            video_link=video_link,
+            waits=waits,
+        )
+        api_client.report_task(
+            task_item_id=comment_claim.task_id,
+            udid=device.udid,
+            result_id=start_result.result_id,
+            comment_bank_item_id=comment_claim.comment_bank_item_id,
+            publish_account=publish_account,
+            status="success",
+            video_link=video_link,
+            result_summary=summary,
+            fail_reason=None,
+            screenshot_url=None,
+            log_url=None,
+        )
+        return self._ensure_douyin_home_page(
+            driver=driver,
+            actions=self._build_actions(
+                driver=driver,
+                args=args,
+                task_id="worker_home_feed_task_after_comment",
+            ),
+            args=args,
+        )
+
+    @staticmethod
+    def _build_home_feed_result_summary(
+        *,
+        comment_claim: ClaimMatchedDoctorCommentResult,
+        author_name: str,
+        like_success: bool,
+        favorite_success: bool,
+        share_success: bool,
+        video_link: str | None,
+        waits: dict[str, float],
+    ) -> str:
+        return (
+            "home_feed "
+            f"doctor={comment_claim.doctor_name} "
+            f"author={author_name} "
+            f"keyword={comment_claim.keyword} "
+            f"commentBankItemId={comment_claim.comment_bank_item_id} "
+            f"like={like_success} favorite={favorite_success} share={share_success} "
+            f"videoLink={video_link or ''} waits={waits}"
+        )
+
     def _ensure_douyin_home_page(
         self,
         *,
@@ -358,7 +708,7 @@ class DouyinAppiumTaskExecutor:
         log_step("打开抖音后释放 driver，执行 clear_session，再重连获取 page source")
         driver = self._reconnect_driver(args=args, driver=driver)
         source = get_page_source(driver)
-        if is_home_page(source):
+        if is_home_page(source) or is_home_feed_page(source):
             log_step("当前已在抖音首页")
             return driver
 
@@ -376,7 +726,7 @@ class DouyinAppiumTaskExecutor:
             if safe_click(return_actions, "link_copied_close_button", "关闭链接复制成功弹窗"):
                 time.sleep(args.return_home_step_wait_seconds)
                 source = get_page_source(driver)
-                if is_home_page(source):
+                if is_home_page(source) or is_home_feed_page(source):
                     log_step("关闭链接复制成功弹窗后已回到首页")
                     return driver
 
@@ -384,7 +734,7 @@ class DouyinAppiumTaskExecutor:
             if safe_click(return_actions, "video_back_button", "退出视频页，返回搜索页"):
                 time.sleep(args.return_home_step_wait_seconds)
                 source = get_page_source(driver)
-                if is_home_page(source):
+                if is_home_page(source) or is_home_feed_page(source):
                     log_step("退出视频页后已回到首页")
                     return driver
 
@@ -392,26 +742,26 @@ class DouyinAppiumTaskExecutor:
             if safe_click(return_actions, "search_back_button", "退出搜索页"):
                 time.sleep(args.return_home_step_wait_seconds)
                 source = get_page_source(driver)
-                if is_home_page(source):
+                if is_home_page(source) or is_home_feed_page(source):
                     log_step("退出搜索页后已回到首页")
                     return driver
 
         for index in range(1, args.return_home_max_back_presses + 1):
-            if is_home_page(source):
+            if is_home_page(source) or is_home_feed_page(source):
                 log_step("已回到抖音首页")
                 return driver
             press_android_back(driver, index)
             time.sleep(args.return_home_step_wait_seconds)
             source = get_page_source(driver)
 
-        if is_home_page(source):
+        if is_home_page(source) or is_home_feed_page(source):
             log_step("已回到抖音首页")
             return driver
 
         log_step("常规返回未能回到首页，使用 adb launcher 重启抖音兜底")
         driver = self._restart_douyin_from_launcher(args=args, driver=driver)
         source = get_page_source(driver)
-        if is_home_page(source):
+        if is_home_page(source) or is_home_feed_page(source):
             log_step("Douyin restarted from launcher and is now on home page")
             return driver
 
@@ -1129,6 +1479,7 @@ class DouyinAppiumTaskExecutor:
         comment: str,
         waits: dict[str, float],
         send_comment: bool,
+        force_stop_after_comment: bool = True,
     ):
         focus_wait_seconds = random_seconds(
             args.comment_focus_min_seconds,
@@ -1165,7 +1516,8 @@ class DouyinAppiumTaskExecutor:
         try:
             self._tap_comment_button_by_adb(actions=actions, args=args)
         except Exception as exc:  # noqa: BLE001 - keep the failure reason actionable.
-            self._force_stop_douyin(args)
+            if force_stop_after_comment:
+                self._force_stop_douyin(args)
             raise RuntimeError(
                 "未找到视频页评论按钮，可能当前打开的是图文/文章页面，无法进入评论流程："
                 f"{exc}"
@@ -1216,13 +1568,15 @@ class DouyinAppiumTaskExecutor:
             log_step(f"评论发送成功：{comment}")
             log_step("评论发送后等待 30 秒，确保发送请求已发出")
             time.sleep(30)
-            self._force_stop_douyin(args)
+            if force_stop_after_comment:
+                self._force_stop_douyin(args)
             return driver
         else:
             log_step(f"评论已输入但未发送：{comment}")
-            log_step("未发送评论，等待 3 秒后强制退出抖音")
+            log_step("未发送评论，等待 3 秒后结束评论流程")
             time.sleep(3)
-            self._force_stop_douyin(args)
+            if force_stop_after_comment:
+                self._force_stop_douyin(args)
             return driver
 
     def _input_focused_comment_text(

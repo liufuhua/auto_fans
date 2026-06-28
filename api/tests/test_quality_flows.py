@@ -525,10 +525,10 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
         db.flush()
 
         tasks = [
-            DailyTask(task_date=date(2026, 6, 7), status="completed", total_count=1, created_by="pytest"),
-            DailyTask(task_date=date(2026, 6, 8), status="completed", total_count=3, created_by="pytest"),
-            DailyTask(task_date=date(2026, 6, 9), status="completed", total_count=1, created_by="pytest"),
-            DailyTask(task_date=date(2026, 6, 10), status="completed", total_count=1, created_by="pytest"),
+            DailyTask(task_date=date(2099, 6, 7), status="completed", total_count=1, created_by="pytest"),
+            DailyTask(task_date=date(2099, 6, 8), status="completed", total_count=3, created_by="pytest"),
+            DailyTask(task_date=date(2099, 6, 9), status="completed", total_count=1, created_by="pytest"),
+            DailyTask(task_date=date(2099, 6, 10), status="completed", total_count=1, created_by="pytest"),
         ]
         db.add_all(tasks)
         db.flush()
@@ -542,7 +542,7 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
             comment_content="comment",
             video_link="https://example.com/before",
             status="success",
-            started_at=datetime(2026, 6, 7, 10, 0, 0),
+                started_at=datetime(2099, 6, 7, 10, 0, 0),
         )
         eligible_result = AutomationResult(
             task_id=tasks[1].id,
@@ -553,7 +553,7 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
             comment_content="comment",
             video_link="https://example.com/eligible",
             status="success",
-            started_at=datetime(2026, 6, 8, 10, 0, 0),
+                started_at=datetime(2099, 6, 8, 10, 0, 0),
         )
         failed_result = AutomationResult(
             task_id=tasks[1].id,
@@ -564,7 +564,7 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
             comment_content="comment",
             video_link="https://example.com/failed",
             status="failed",
-            started_at=datetime(2026, 6, 8, 10, 0, 0),
+                started_at=datetime(2099, 6, 8, 10, 0, 0),
         )
         no_video_result = AutomationResult(
             task_id=tasks[2].id,
@@ -575,7 +575,7 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
             comment_content="comment",
             video_link="",
             status="success",
-            started_at=datetime(2026, 6, 9, 10, 0, 0),
+                started_at=datetime(2099, 6, 9, 10, 0, 0),
         )
         result_after_range = AutomationResult(
             task_id=tasks[3].id,
@@ -586,7 +586,7 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
             comment_content="comment",
             video_link="https://example.com/after",
             status="success",
-            started_at=datetime(2026, 6, 10, 10, 0, 0),
+                started_at=datetime(2099, 6, 10, 10, 0, 0),
         )
         db.add_all([
             result_before_range,
@@ -598,7 +598,7 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
         db.commit()
 
         result_ids = list_comment_recheck_result_ids_by_date_range(
-            db, date(2026, 6, 8), date(2026, 6, 9)
+                db, date(2099, 6, 8), date(2099, 6, 9)
         )
         page_result = list_comment_recheck_items(
             db,
@@ -607,8 +607,8 @@ def test_comment_recheck_date_range_selects_only_eligible_results() -> None:
             None,
             None,
             None,
-            date(2026, 6, 8),
-            date(2026, 6, 9),
+                date(2099, 6, 8),
+                date(2099, 6, 9),
         )
 
         assert result_ids == [eligible_result.id]

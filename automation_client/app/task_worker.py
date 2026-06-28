@@ -222,6 +222,12 @@ class TaskWorker:
                     should_stop_business=should_stop,
                 )
 
+        object.__setattr__(task, "publish_account", self.publish_account)
+        if task.doctors and (
+            task.task_item_id is None or task.comment_bank_item_id is None
+        ):
+            return self._run_home_feed_task(task)
+
         task_item_id = self._required_int(task.task_item_id, "taskItemId")
         comment_bank_item_id = self._required_int(task.comment_bank_item_id, "commentBankItemId")
         with self._device_log_context(task_item_id=task_item_id):
@@ -291,6 +297,37 @@ class TaskWorker:
                     report_result.result_id,
                     report_result.status,
                 )
+                return TaskWorkerRunResult(claimed_task=True)
+            finally:
+                if self.auto_stop_after_task:
+                    self._auto_stop_business("task iteration finished", force=True)
+                self._set_runtime_status_if_online("idle")
+
+    def _run_home_feed_task(self, task: ClaimTaskResult) -> TaskWorkerRunResult:
+        doctor_names = ", ".join(item.doctor_name for item in task.doctors)
+        start_result = StartTaskResult(result_id=0, status="home_feed")
+        with self._device_log_context(result_id=start_result.result_id):
+            logger.info(
+                "claimed home-feed doctor list task: device=%s doctors=%s",
+                self.device.name,
+                doctor_names,
+            )
+            self._set_runtime_status_if_online("running")
+            try:
+                execution_result = self._execute_task(task, start_result)
+                if execution_result.report_to_backend:
+                    logger.warning(
+                        "home-feed executor returned reportable result without concrete "
+                        "comment claim: device=%s status=%s",
+                        self.device.name,
+                        execution_result.status,
+                    )
+                else:
+                    logger.info(
+                        "home-feed executor handled backend report: device=%s status=%s",
+                        self.device.name,
+                        execution_result.status,
+                    )
                 return TaskWorkerRunResult(claimed_task=True)
             finally:
                 if self.auto_stop_after_task:

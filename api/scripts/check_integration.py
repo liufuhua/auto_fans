@@ -173,12 +173,26 @@ def main() -> None:
     claim_response.raise_for_status()
     claim = claim_response.json()["data"]
     assert claim["hasTask"] is True
+    assert any(doctor["doctorId"] == doctor_id for doctor in claim["doctors"])
 
-    start_response = client.post(
-        f"/api/automation/tasks/{claim['taskItemId']}/start",
+    comment_claim_response = client.post(
+        "/api/automation/tasks/matched-comment/claim",
         json={
             "udid": TEST_DEVICE_UDID,
-            "commentBankItemId": claim["commentBankItemId"],
+            "doctorId": doctor_id,
+            "publishAccount": "测试账号01",
+        },
+    )
+    comment_claim_response.raise_for_status()
+    comment_claim = comment_claim_response.json()["data"]
+    assert comment_claim["taskId"] == 1
+    assert comment_claim["commentBankItemId"]
+
+    start_response = client.post(
+        "/api/automation/tasks/1/start",
+        json={
+            "udid": TEST_DEVICE_UDID,
+            "commentBankItemId": comment_claim["commentBankItemId"],
             "publishAccount": "测试账号01",
         },
     )
@@ -186,11 +200,11 @@ def main() -> None:
     result_id = start_response.json()["data"]["resultId"]
 
     report_response = client.post(
-        f"/api/automation/tasks/{claim['taskItemId']}/report",
+        "/api/automation/tasks/1/report",
         json={
             "udid": TEST_DEVICE_UDID,
             "resultId": result_id,
-            "commentBankItemId": claim["commentBankItemId"],
+            "commentBankItemId": comment_claim["commentBankItemId"],
             "publishAccount": "测试账号01",
             "status": "success",
             "videoLink": "https://example.com/video/integration",
@@ -205,7 +219,7 @@ def main() -> None:
     results_response = client.get(
         "/api/automation-results",
         params={
-            "taskId": task_id,
+            "taskId": 1,
             "deviceId": device_id,
             "status": "success",
             "page": 1,

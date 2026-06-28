@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import httpx
@@ -47,9 +47,18 @@ class AutomationTimingSettingResult:
 
 
 @dataclass(frozen=True)
+class ClaimTaskDoctorResult:
+    doctor_id: int
+    doctor_name: str
+    doctor_real_name: str = ""
+
+
+@dataclass(frozen=True)
 class ClaimTaskResult:
     has_task: bool
     reason: str | None = None
+    doctors: list[ClaimTaskDoctorResult] = field(default_factory=list)
+    publish_account: str | None = None
     task_id: int | None = None
     task_item_id: int | None = None
     doctor_id: int | None = None
@@ -60,6 +69,19 @@ class ClaimTaskResult:
     search_word: str | None = None
     comment_bank_item_id: int | None = None
     comment_content: str | None = None
+
+
+@dataclass(frozen=True)
+class ClaimMatchedDoctorCommentResult:
+    task_id: int
+    doctor_id: int
+    doctor_name: str
+    doctor_real_name: str
+    keyword_id: int
+    keyword: str
+    search_word: str
+    comment_bank_item_id: int
+    comment_content: str
 
 
 @dataclass(frozen=True)
@@ -188,15 +210,48 @@ class AutomationApiClient:
                 "publishAccount": publish_account,
             },
         )
+        doctors = _parse_claim_task_doctors(data.get("doctors"))
         if not bool(data.get("hasTask")):
             reason = data.get("reason")
-            return ClaimTaskResult(has_task=False, reason=str(reason) if reason else None)
+            return ClaimTaskResult(
+                has_task=False,
+                reason=str(reason) if reason else None,
+                doctors=doctors,
+            )
 
         return ClaimTaskResult(
             has_task=True,
             reason=str(data["reason"]) if data.get("reason") else None,
+            doctors=doctors,
+            task_id=_optional_int(data.get("taskId")),
+            task_item_id=_optional_int(data.get("taskItemId")),
+            doctor_id=_optional_int(data.get("doctorId")),
+            doctor_name=_optional_str(data.get("doctorName")),
+            doctor_real_name=_optional_str(data.get("doctorRealName")),
+            keyword_id=_optional_int(data.get("keywordId")),
+            keyword=_optional_str(data.get("keyword")),
+            search_word=_optional_str(data.get("searchWord")),
+            comment_bank_item_id=_optional_int(data.get("commentBankItemId")),
+            comment_content=_optional_str(data.get("commentContent")),
+        )
+
+    def claim_matched_doctor_comment(
+        self,
+        *,
+        udid: str,
+        doctor_id: int,
+        publish_account: str,
+    ) -> ClaimMatchedDoctorCommentResult:
+        data = self._post(
+            "/automation/tasks/matched-comment/claim",
+            json={
+                "udid": udid,
+                "doctorId": doctor_id,
+                "publishAccount": publish_account,
+            },
+        )
+        return ClaimMatchedDoctorCommentResult(
             task_id=int(data["taskId"]),
-            task_item_id=int(data["taskItemId"]),
             doctor_id=int(data["doctorId"]),
             doctor_name=str(data["doctorName"]),
             doctor_real_name=str(data.get("doctorRealName") or ""),
@@ -328,3 +383,34 @@ def _parse_datetime(value: object) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(str(value))
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _parse_claim_task_doctors(value: object) -> list[ClaimTaskDoctorResult]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise AutomationApiError("backend api returned invalid doctors data")
+    doctors: list[ClaimTaskDoctorResult] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise AutomationApiError("backend api returned invalid doctor item")
+        doctors.append(
+            ClaimTaskDoctorResult(
+                doctor_id=int(item["doctorId"]),
+                doctor_name=str(item["doctorName"]),
+                doctor_real_name=str(item.get("doctorRealName") or ""),
+            )
+        )
+    return doctors

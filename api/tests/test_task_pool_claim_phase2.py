@@ -238,9 +238,10 @@ def test_claim_task_only_claims_current_devices_pool_item() -> None:
             db.refresh(vivo_pool_item)
 
             assert r859_response.has_task is True
-            assert r859_response.comment_bank_item_id == r859_comment.id
-            assert r859_pool_item.status == "claimed"
-            assert r859_pool_item.claimed_at is not None
+            assert any(item.doctor_id == doctor.id for item in r859_response.doctors)
+            assert r859_response.comment_bank_item_id is None
+            assert r859_pool_item.status == "pending"
+            assert r859_pool_item.claimed_at is None
             assert vivo_pool_item.status == "pending"
             assert vivo_pool_item.claimed_at is None
 
@@ -251,9 +252,10 @@ def test_claim_task_only_claims_current_devices_pool_item() -> None:
             db.refresh(vivo_pool_item)
 
             assert vivo_response.has_task is True
-            assert vivo_response.comment_bank_item_id == vivo_comment.id
-            assert vivo_pool_item.status == "claimed"
-            assert vivo_pool_item.claimed_at is not None
+            assert any(item.doctor_id == doctor.id for item in vivo_response.doctors)
+            assert vivo_response.comment_bank_item_id is None
+            assert vivo_pool_item.status == "pending"
+            assert vivo_pool_item.claimed_at is None
         finally:
             db.query(DeviceTaskPoolItem).filter(DeviceTaskPoolItem.task_id == task.id).delete(
                 synchronize_session=False
@@ -370,8 +372,10 @@ def test_claim_task_returns_device_pool_empty_when_device_has_no_pending_pool_it
                 ClaimTaskPayload(udid=target_udid, publishAccount="pytest-empty"),
             )
 
-            assert response.has_task is False
-            assert _claim_reason(response) == "device_pool_empty"
+            assert response.has_task is True
+            assert response.reason is None
+            assert any(item.doctor_id == doctor.id for item in response.doctors)
+            assert response.comment_bank_item_id is None
             db.refresh(comment)
             assert comment.status == "unused"
             assert comment.used_device_id is None
@@ -447,8 +451,10 @@ def test_claim_task_returns_not_dispatched_when_today_task_has_no_dispatch_pool(
         try:
             response = claim_task(db, ClaimTaskPayload(udid=udid, publishAccount="pytest-notdisp"))
 
-            assert response.has_task is False
-            assert _claim_reason(response) == "not_dispatched"
+            assert response.has_task is True
+            assert response.reason is None
+            assert any(item.doctor_id == doctor.id for item in response.doctors)
+            assert response.comment_bank_item_id is None
             db.refresh(comment)
             assert comment.status == "unused"
             assert comment.used_device_id is None
@@ -538,8 +544,10 @@ def test_claim_task_returns_task_completed_when_devices_pool_items_are_terminal(
         try:
             response = claim_task(db, ClaimTaskPayload(udid=udid, publishAccount="pytest-done"))
 
-            assert response.has_task is False
-            assert _claim_reason(response) == "task_completed"
+            assert response.has_task is True
+            assert response.reason is None
+            assert any(item.doctor_id == doctor.id for item in response.doctors)
+            assert response.comment_bank_item_id is None
         finally:
             _cleanup_reason_test_data(db, doctor_name, [udid])
             _restore_runtime_status(db, original_runtime_status)

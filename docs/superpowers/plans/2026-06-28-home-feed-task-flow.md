@@ -18,11 +18,11 @@
 - 修改：`api/app/api/routes/automation.py`
 - 测试：`api/tests/test_automation_home_feed_flow.py`
 
-- [ ] 给 `ClaimTaskResponse` 增加 `doctors` 字段，返回所有可匹配的启用医生。
-- [ ] 新增“按命中医生领取一条未使用评论”的后端服务方法。
-- [ ] 新增客户端调用的领取评论接口。
-- [ ] 评论领取结果返回 `taskId=1`、`doctorId`、`doctorName`、`keywordId`、`keyword`、`commentBankItemId`、`commentContent`。
-- [ ] 添加测试：验证 claim 返回医生列表，验证命中医生后能领取未使用评论。
+- [x] 给 `ClaimTaskResponse` 增加 `doctors` 字段，返回所有可匹配的启用医生。
+- [x] 新增“按命中医生领取一条未使用评论”的后端服务方法。
+- [x] 新增客户端调用的领取评论接口。
+- [x] 评论领取结果返回 `taskId=1`、`doctorId`、`doctorName`、`keywordId`、`keyword`、`commentBankItemId`、`commentContent`。
+- [x] 添加测试：验证 claim 返回医生列表，验证命中医生后能领取未使用评论。
 
 验证命令：
 
@@ -39,10 +39,10 @@ cd E:\auto_fans\api
 - 修改：`api/app/services/automation.py`
 - 测试：`api/tests/test_automation_home_feed_flow.py`
 
-- [ ] `start/report` 支持新的首页流评论任务，不再强制要求旧任务池记录。
-- [ ] 新流程产生的结果统一保存到 `task_id=1`。
-- [ ] 结果中保留真实医生、关键词、评论、设备、发布账号、视频链接、状态和摘要。
-- [ ] 成功领取的评论要标记为已使用。
+- [x] `start/report` 支持新的首页流评论任务，不再强制要求旧任务池记录。
+- [x] 新流程产生的结果统一保存到 `task_id=1`。
+- [x] 结果中保留真实医生、关键词、评论、设备、发布账号、视频链接、状态和摘要。
+- [x] 成功领取的评论要标记为已使用。
 
 验证命令：
 
@@ -59,9 +59,9 @@ cd E:\auto_fans\api
 - 修改：`automation_client/app/api_client.py`
 - 测试：`automation_client/tests/test_task_worker.py`
 
-- [ ] `ClaimTaskResult` 支持医生列表。
-- [ ] 新增“按医生 ID 领取未使用评论”的客户端 API 方法。
-- [ ] 保留旧字段为可选，避免现有测试和调试脚本直接损坏。
+- [x] `ClaimTaskResult` 支持医生列表。
+- [x] 新增“按医生 ID 领取未使用评论”的客户端 API 方法。
+- [x] 保留旧字段为可选，避免现有测试和调试脚本直接损坏。
 
 验证命令：
 
@@ -78,11 +78,11 @@ cd E:\auto_fans\automation_client
 - 修改：`automation_client/app/task_worker.py`
 - 测试：`automation_client/tests/test_task_worker.py`
 
-- [ ] 保持设备在线、业务开关、运行时间段、heartbeat 检查不变。
-- [ ] claim 成功后，不再要求必须有 `taskItemId` 和 `commentBankItemId`。
-- [ ] 将医生列表传给执行器。
-- [ ] 命中作者后，由执行器再领取该医生的评论。
-- [ ] 每次命中互动成功后，按任务 1 上报结果。
+- [x] 保持设备在线、业务开关、运行时间段、heartbeat 检查不变。
+- [x] claim 成功后，不再要求必须有 `taskItemId` 和 `commentBankItemId`。
+- [x] 将医生列表传给执行器。
+- [x] 命中作者后，由执行器再领取该医生的评论；TaskWorker 不再提前调用旧的 `start_task` / `report_task`。
+- [x] 每次命中互动成功后，按任务 1 上报结果。
 
 验证命令：
 
@@ -99,13 +99,13 @@ cd E:\auto_fans\automation_client
 - 修改：`automation_client/app/douyin_task_executor.py`
 - 测试：`automation_client/tests/test_douyin_task_executor.py`
 
-- [ ] 将旧的“搜索医生视频”执行方式改为“首页流观看”。
-- [ ] 按后台配置的 `watch_video` 时长停留观看。
-- [ ] 获取当前首页视频作者名称。
-- [ ] 使用 `医生昵称 in 视频作者名称` 判断是否命中。
-- [ ] 未命中时，滑动到下一个视频继续观看。
-- [ ] 命中时，领取该医生未使用评论，然后执行点赞、收藏、分享、评论、上报。
-- [ ] 评论成功后不退出抖音，返回首页并滑动到下一个视频。
+- [x] 将旧的“搜索医生视频”执行方式改为“首页流观看”。
+- [x] 按后台配置的 `watch_video` 时长停留观看。
+- [x] 获取当前首页视频作者名称。
+- [x] 使用 `医生昵称 in 视频作者名称` 判断是否命中。
+- [x] 未命中时，滑动到下一个视频继续观看。
+- [x] 命中时，领取该医生未使用评论，然后执行点赞、收藏、分享、评论、上报。
+- [x] 评论成功后不退出抖音，返回首页并滑动到下一个视频。
 
 验证命令：
 
@@ -128,3 +128,5 @@ cd E:\auto_fans\automation_client
 ```
 
 预期：API 和自动化客户端测试全部通过。
+
+结果：已通过。API `29 passed, 2 warnings`；automation_client `87 passed`。

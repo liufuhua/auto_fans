@@ -72,9 +72,16 @@ class ClaimTaskPayload(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
+class ClaimTaskDoctorItem(BaseModel):
+    doctor_id: int = Field(serialization_alias="doctorId")
+    doctor_name: str = Field(serialization_alias="doctorName")
+    doctor_real_name: str = Field(default="", serialization_alias="doctorRealName")
+
+
 class ClaimTaskResponse(BaseModel):
     has_task: bool = Field(serialization_alias="hasTask")
     reason: str | None = None
+    doctors: list[ClaimTaskDoctorItem] = Field(default_factory=list)
     task_id: int | None = Field(default=None, serialization_alias="taskId")
     task_item_id: int | None = Field(default=None, serialization_alias="taskItemId")
     doctor_id: int | None = Field(default=None, serialization_alias="doctorId")
@@ -85,6 +92,26 @@ class ClaimTaskResponse(BaseModel):
     search_word: str | None = Field(default=None, serialization_alias="searchWord")
     comment_bank_item_id: int | None = Field(default=None, serialization_alias="commentBankItemId")
     comment_content: str | None = Field(default=None, serialization_alias="commentContent")
+
+
+class ClaimMatchedDoctorCommentPayload(BaseModel):
+    udid: str = Field(min_length=1, max_length=128)
+    doctor_id: int = Field(validation_alias="doctorId")
+    publish_account: str = Field(validation_alias="publishAccount", min_length=1, max_length=100)
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class ClaimMatchedDoctorCommentResponse(BaseModel):
+    task_id: int = Field(serialization_alias="taskId")
+    doctor_id: int = Field(serialization_alias="doctorId")
+    doctor_name: str = Field(serialization_alias="doctorName")
+    doctor_real_name: str = Field(default="", serialization_alias="doctorRealName")
+    keyword_id: int = Field(serialization_alias="keywordId")
+    keyword: str
+    search_word: str = Field(serialization_alias="searchWord")
+    comment_bank_item_id: int = Field(serialization_alias="commentBankItemId")
+    comment_content: str = Field(serialization_alias="commentContent")
 
 
 class StartTaskPayload(BaseModel):

@@ -79,6 +79,31 @@ def is_home_page(source: str) -> bool:
     return has_home_tab and has_bottom_tabs and not has_search_input
 
 
+def is_home_feed_page(source: str) -> bool:
+    if not source or has_search_page(source):
+        return False
+    if 'resource-id="com.ss.android.ugc.aweme:id/back_btn"' in source:
+        return False
+    has_author = (
+        'resource-id="com.ss.android.ugc.aweme:id/title"' in source
+        or 'resource-id="com.ss.android.ugc.aweme:id/user_avatar"' in source
+    )
+    has_video_actions = any(
+        marker in source
+        for marker in (
+            "喜欢",
+            "评论",
+            "收藏",
+            "分享",
+            "鍠滄",
+            "璇勮",
+            "鏀惰棌",
+            "鍒嗕韩",
+        )
+    )
+    return has_author and has_video_actions
+
+
 def has_link_copied_popup(source: str) -> bool:
     return (
         "链接已复制成功" in source

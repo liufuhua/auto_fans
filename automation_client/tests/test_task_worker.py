@@ -1,6 +1,7 @@
 from app.api_client import (
     AutomationRuntimeState,
     AutomationTimingSettingResult,
+    ClaimTaskDoctorResult,
     ClaimTaskResult,
     ReportTaskResult,
     StartTaskResult,
@@ -220,6 +221,39 @@ def test_worker_run_once_returns_claimed_result() -> None:
     assert result.claimed_task is True
     assert result.no_task_reason is None
     assert result.should_stop_business is False
+
+
+def test_worker_executes_doctor_list_task_without_old_start_or_report() -> None:
+    task = ClaimTaskResult(
+        has_task=True,
+        doctors=[
+            ClaimTaskDoctorResult(doctor_id=31, doctor_name="doctor-a"),
+            ClaimTaskDoctorResult(doctor_id=32, doctor_name="doctor-b"),
+        ],
+    )
+    api_client = FakeApiClient([task])
+    executor = RecordingExecutor(result=TaskExecutionResult.no_report())
+    device = make_device()
+    worker = TaskWorker(
+        device=device,
+        api_client=api_client,  # type: ignore[arg-type]
+        publish_account="account",
+        poll_interval_seconds=0,
+        executor=executor,
+        runtime_dir="runtime",
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed_task is True
+    assert result.no_task_reason is None
+    assert api_client.start_requests == []
+    assert api_client.report_requests == []
+    assert len(executor.tasks) == 1
+    assert executor.tasks[0][0] is task
+    assert executor.tasks[0][0].doctors == task.doctors
+    assert executor.tasks[0][1] == StartTaskResult(result_id=0, status="home_feed")
+    assert executor.tasks[0][2] is device
 
 
 def test_worker_run_once_returns_no_task_reason() -> None:

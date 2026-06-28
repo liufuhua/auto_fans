@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from app.api_client import AutomationTimingSettingResult
+from app.api_client import (
+    AutomationTimingSettingResult,
+    ClaimMatchedDoctorCommentResult,
+    ClaimTaskDoctorResult,
+    ClaimTaskResult,
+    ReportTaskResult,
+    StartTaskResult,
+)
 from app.device_manager import BackendDeviceConfig
 from app.douyin_actions import DouyinActions, DouyinLocatorError, LocatorRepository
 from app.douyin_task_executor import (
@@ -9,6 +16,7 @@ from app.douyin_task_executor import (
     DouyinAppiumTaskExecutor,
     SearchResultNotFoundError,
 )
+from app.appium_driver import ManagedAppiumDriver
 
 HOME_SOURCE = """
 <hierarchy>
@@ -22,6 +30,16 @@ SEARCH_SOURCE = """
 <hierarchy>
   <node resource-id="com.ss.android.ugc.aweme:id/bve" content-desc="返回" />
   <node resource-id="com.ss.android.ugc.aweme:id/et_search_kw" text="Doctor Gao" />
+</hierarchy>
+"""
+
+HOME_FEED_SOURCE = """
+<hierarchy>
+  <node text="@偏瘫的飛" resource-id="com.ss.android.ugc.aweme:id/title" />
+  <node content-desc="偏瘫的飛" resource-id="com.ss.android.ugc.aweme:id/user_avatar" />
+  <node content-desc="喜欢，按钮" />
+  <node content-desc="评论，按钮" />
+  <node content-desc="分享，按钮" />
 </hierarchy>
 """
 
@@ -47,6 +65,48 @@ class FakeDriver:
 
     def quit(self) -> None:
         self.quit_count += 1
+
+
+class FakeDriverFactory:
+    def __init__(self, driver: object) -> None:
+        self.driver = driver
+        self.created_devices = []
+
+    def create(self, device):
+        self.created_devices.append(device)
+        return ManagedAppiumDriver(device=device, driver=self.driver)
+
+
+class FakeHomeFeedApiClient:
+    def __init__(self) -> None:
+        self.claim_comment_requests = []
+        self.start_requests = []
+        self.report_requests = []
+
+    def list_timing_settings(self):
+        return []
+
+    def claim_matched_doctor_comment(self, **kwargs):
+        self.claim_comment_requests.append(kwargs)
+        return ClaimMatchedDoctorCommentResult(
+            task_id=1,
+            doctor_id=kwargs["doctor_id"],
+            doctor_name="Doctor Gao",
+            doctor_real_name="",
+            keyword_id=12,
+            keyword="home feed",
+            search_word="home feed",
+            comment_bank_item_id=88,
+            comment_content="matched comment",
+        )
+
+    def start_task(self, **kwargs):
+        self.start_requests.append(kwargs)
+        return StartTaskResult(result_id=99, status="running")
+
+    def report_task(self, **kwargs):
+        self.report_requests.append(kwargs)
+        return ReportTaskResult(result_id=kwargs["result_id"], status=kwargs["status"])
 
 
 class FakeSearchInputElement:
@@ -329,6 +389,31 @@ def test_executor_preflight_opens_douyin_when_already_home(monkeypatch) -> None:
     executor = DouyinAppiumTaskExecutor(config=config)
     args = executor._build_args(make_device())
     driver = FakeDriver([HOME_SOURCE])
+    actions = DouyinActions(
+        driver=driver,
+        locators=LocatorRepository({}),
+        udid=args.udid,
+        package_name=args.package_name,
+        wait_timeout_seconds=args.wait_timeout_seconds,
+        task_id="test",
+    )
+
+    monkeypatch.setattr(executor, "_reconnect_driver", lambda *, args, driver: driver)
+
+    executor._ensure_douyin_home_page(driver=driver, actions=actions, args=args)
+
+    assert driver.activated_packages == [args.package_name]
+    assert driver.pressed_keycodes == []
+
+
+def test_executor_preflight_accepts_home_feed_without_back_presses(monkeypatch) -> None:
+    config = DouyinAppiumExecutorConfig(
+        appium_server_url="http://127.0.0.1:4723",
+        after_open_seconds=0,
+    )
+    executor = DouyinAppiumTaskExecutor(config=config)
+    args = executor._build_args(make_device())
+    driver = FakeDriver([HOME_FEED_SOURCE])
     actions = DouyinActions(
         driver=driver,
         locators=LocatorRepository({}),
@@ -678,3 +763,141 @@ def test_vivo_comment_actions_prefer_adb_without_changing_huawei_coordinates() -
     assert huawei_profile.active_comment_input.y == 0.965
     assert huawei_profile.send_button.x == 0.894
     assert huawei_profile.send_button.y == 0.555
+
+
+def test_home_feed_task_watches_and_swipes_until_author_matches(monkeypatch) -> None:
+    driver = FakeDriver([HOME_SOURCE])
+    executor = DouyinAppiumTaskExecutor(
+        config=DouyinAppiumExecutorConfig(
+            appium_server_url="http://127.0.0.1:4723",
+            max_swipes=3,
+        ),
+        driver_factory=FakeDriverFactory(driver),  # type: ignore[arg-type]
+    )
+    api_client = FakeHomeFeedApiClient()
+    task = ClaimTaskResult(
+        has_task=True,
+        publish_account="account-1",
+        doctors=[ClaimTaskDoctorResult(doctor_id=31, doctor_name="Doctor Gao")],
+    )
+    calls = []
+    authors = iter(["Other Author", "Clinic Doctor Gao"])
+
+    monkeypatch.setattr(executor, "_configure_driver", lambda driver: None)
+    monkeypatch.setattr(executor, "_ensure_douyin_home_page", lambda **kwargs: kwargs["driver"])
+    monkeypatch.setattr(executor, "_get_home_feed_video_author_name", lambda driver: next(authors))
+    monkeypatch.setattr(executor, "_watch_home_feed_video", lambda *, args, waits: calls.append("watch"))
+    monkeypatch.setattr(
+        executor,
+        "_swipe_to_next_home_feed_video",
+        lambda *, driver, actions, args: calls.append("swipe") or driver,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_execute_home_feed_matched_comment",
+        lambda **kwargs: calls.append(("matched", kwargs["matched_doctor"].doctor_id)) or driver,
+    )
+    monkeypatch.setattr("app.douyin_task_executor.quit_with_timeout", lambda driver, timeout: None)
+    monkeypatch.setattr(executor, "_clear_appium_session", lambda args: None)
+
+    result = executor.execute(
+        task=task,
+        start_result=StartTaskResult(result_id=0, status="home_feed"),
+        device=make_device(),
+        api_client=api_client,  # type: ignore[arg-type]
+    )
+
+    assert result.report_to_backend is False
+    assert calls == ["watch", "swipe", "watch", ("matched", 31), "swipe"]
+
+
+def test_home_feed_author_candidates_prefer_title_resource_id() -> None:
+    source = """
+    <hierarchy>
+      <node text="视频" resource-id="android:id/text1" bounds="[0,0][100,80]" />
+      <node text="@偏瘫的飛" resource-id="com.ss.android.ugc.aweme:id/title" bounds="[36,1842][290,1917]" />
+      <node content-desc="偏瘫的飛" resource-id="com.ss.android.ugc.aweme:id/user_avatar" bounds="[915,998][1059,1142]" />
+    </hierarchy>
+    """
+
+    candidates = DouyinAppiumTaskExecutor._author_candidates_from_source(source)
+
+    assert candidates[0] == "偏瘫的飛"
+    assert "视频" not in candidates
+
+
+def test_home_feed_author_candidates_fall_back_to_user_avatar_description() -> None:
+    source = """
+    <hierarchy>
+      <node text="视频" resource-id="android:id/text1" bounds="[0,0][100,80]" />
+      <node text="" content-desc="偏瘫的飛" resource-id="com.ss.android.ugc.aweme:id/user_avatar" bounds="[915,998][1059,1142]" />
+    </hierarchy>
+    """
+
+    candidates = DouyinAppiumTaskExecutor._author_candidates_from_source(source)
+
+    assert candidates[0] == "偏瘫的飛"
+    assert "视频" not in candidates
+
+
+def test_home_feed_matched_author_claims_comment_and_reports_task_1(monkeypatch) -> None:
+    driver = FakeDriver([HOME_SOURCE])
+    executor = DouyinAppiumTaskExecutor(config=DouyinAppiumExecutorConfig())
+    args = executor._build_args(make_device())
+    api_client = FakeHomeFeedApiClient()
+    matched_doctor = ClaimTaskDoctorResult(doctor_id=31, doctor_name="Doctor Gao")
+    actions = FakeSearchActions(driver)
+    calls = []
+
+    monkeypatch.setattr(
+        executor,
+        "_like_video_and_reconnect",
+        lambda *, actions, args, waits: calls.append("like") or (True, driver),
+    )
+    monkeypatch.setattr(
+        executor,
+        "_favorite_video_and_reconnect",
+        lambda *, actions, args, waits: calls.append("favorite") or (True, driver),
+    )
+    monkeypatch.setattr(
+        executor,
+        "_share_video_and_reconnect",
+        lambda *, actions, args: calls.append("share") or (True, "https://v.douyin.com/test/", driver),
+    )
+    monkeypatch.setattr(
+        executor,
+        "_comment_video_and_reconnect",
+        lambda **kwargs: calls.append(("comment", kwargs["comment"], kwargs["force_stop_after_comment"])) or driver,
+    )
+    monkeypatch.setattr(executor, "_ensure_douyin_home_page", lambda **kwargs: calls.append("home") or kwargs["driver"])
+
+    result_driver = executor._execute_home_feed_matched_comment(
+        driver=driver,
+        actions=actions,  # type: ignore[arg-type]
+        args=args,
+        waits={},
+        api_client=api_client,  # type: ignore[arg-type]
+        device=make_device(),
+        matched_doctor=matched_doctor,
+        author_name="Clinic Doctor Gao",
+        publish_account="account-1",
+    )
+
+    assert result_driver is driver
+    assert api_client.claim_comment_requests == [
+        {"udid": "R5CW11CKN0B", "doctor_id": 31, "publish_account": "account-1"}
+    ]
+    assert api_client.start_requests == [
+        {
+            "task_item_id": 1,
+            "udid": "R5CW11CKN0B",
+            "comment_bank_item_id": 88,
+            "publish_account": "account-1",
+        }
+    ]
+    assert api_client.report_requests[0]["task_item_id"] == 1
+    assert api_client.report_requests[0]["comment_bank_item_id"] == 88
+    assert api_client.report_requests[0]["result_id"] == 99
+    assert api_client.report_requests[0]["status"] == "success"
+    assert api_client.report_requests[0]["video_link"] == "https://v.douyin.com/test/"
+    assert calls == ["like", "favorite", "share", ("comment", "matched comment", False), "home"]

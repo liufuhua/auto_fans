@@ -173,6 +173,13 @@ def test_claim_task_request_and_task_response() -> None:
                     "searchWord": "脑膜瘤",
                     "commentBankItemId": 5,
                     "commentContent": "测试评论内容",
+                    "doctors": [
+                        {
+                            "doctorId": 3,
+                            "doctorName": "张明山",
+                            "doctorRealName": "张明山教授",
+                        }
+                    ],
                 },
             },
         )
@@ -192,6 +199,47 @@ def test_claim_task_request_and_task_response() -> None:
     assert result.search_word == "脑膜瘤"
     assert result.comment_bank_item_id == 5
     assert result.comment_content == "测试评论内容"
+    assert len(result.doctors) == 1
+    assert result.doctors[0].doctor_id == 3
+    assert result.doctors[0].doctor_name == "张明山"
+    assert result.doctors[0].doctor_real_name == "张明山教授"
+
+
+def test_claim_task_response_with_doctors_only() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/automation/tasks/claim"
+        return httpx.Response(
+            200,
+            json={
+                "code": "OK",
+                "message": "success",
+                "data": {
+                    "hasTask": False,
+                    "reason": "device_pool_empty",
+                    "doctors": [
+                        {
+                            "doctorId": 31,
+                            "doctorName": "王医生",
+                            "doctorRealName": "王医生主任",
+                        },
+                        {
+                            "doctorId": 32,
+                            "doctorName": "李医生",
+                            "doctorRealName": "",
+                        },
+                    ],
+                },
+            },
+        )
+
+    client = AutomationApiClient("http://testserver/api", transport=httpx.MockTransport(handler))
+    result = client.claim_task(udid="device-1", publish_account="测试账号01")
+
+    assert result.has_task is False
+    assert result.reason == "device_pool_empty"
+    assert result.task_id is None
+    assert [doctor.doctor_id for doctor in result.doctors] == [31, 32]
+    assert [doctor.doctor_name for doctor in result.doctors] == ["王医生", "李医生"]
 
 
 def test_claim_task_request_and_empty_response() -> None:
@@ -211,6 +259,7 @@ def test_claim_task_request_and_empty_response() -> None:
     assert result.has_task is False
     assert result.task_id is None
     assert result.comment_content is None
+    assert result.doctors == []
 
 
 def test_claim_task_empty_response_keeps_reason() -> None:
@@ -265,6 +314,55 @@ def test_start_task_request_and_response() -> None:
     assert len(requests) == 1
     assert result.result_id == 8
     assert result.status == "running"
+
+
+def test_claim_matched_doctor_comment_request_and_response() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/api/automation/tasks/matched-comment/claim"
+        assert json.loads(request.read()) == {
+            "udid": "device-1",
+            "doctorId": 31,
+            "publishAccount": "测试账号01",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "code": "OK",
+                "message": "success",
+                "data": {
+                    "taskId": 1,
+                    "doctorId": 31,
+                    "doctorName": "王医生",
+                    "doctorRealName": "王医生主任",
+                    "keywordId": 41,
+                    "keyword": "肺结节",
+                    "searchWord": "肺结节",
+                    "commentBankItemId": 51,
+                    "commentContent": "首页流评论内容",
+                },
+            },
+        )
+
+    client = AutomationApiClient("http://testserver/api", transport=httpx.MockTransport(handler))
+    result = client.claim_matched_doctor_comment(
+        udid="device-1",
+        doctor_id=31,
+        publish_account="测试账号01",
+    )
+
+    assert len(requests) == 1
+    assert result.task_id == 1
+    assert result.doctor_id == 31
+    assert result.doctor_name == "王医生"
+    assert result.doctor_real_name == "王医生主任"
+    assert result.keyword_id == 41
+    assert result.keyword == "肺结节"
+    assert result.search_word == "肺结节"
+    assert result.comment_bank_item_id == 51
+    assert result.comment_content == "首页流评论内容"
 
 
 def test_report_task_request_and_response() -> None:
