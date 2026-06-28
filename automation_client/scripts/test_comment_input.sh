@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+detect_udid() {
+  adb devices | awk 'NR > 1 && $2 == "device" {print $1}'
+}
+
+default_device_name() {
+  case "$1" in
+    FMR0223830012928) echo "device_01" ;;
+    adb-10AG3R2JNF001KK-WGRLsd._adb-tls-connect._tcp) echo "device_02" ;;
+    R5CW11CKN0B) echo "device_03" ;;
+    *) echo "device_01" ;;
+  esac
+}
+
+default_system_port() {
+  case "$1" in
+    FMR0223830012928) echo "8201" ;;
+    adb-10AG3R2JNF001KK-WGRLsd._adb-tls-connect._tcp) echo "8202" ;;
+    R5CW11CKN0B) echo "8203" ;;
+    *) echo "8201" ;;
+  esac
+}
+
+UDID="${1:-${DEFAULT_UDID:-}}"
+if [[ -z "$UDID" ]]; then
+  ONLINE_UDIDS="$(detect_udid)"
+  ONLINE_COUNT="$(printf "%s\n" "$ONLINE_UDIDS" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [[ "$ONLINE_COUNT" != "1" ]]; then
+    echo "未指定设备，且当前在线设备数量不是 1。"
+    echo "用法：scripts/test_comment_input.sh <udid> [text]"
+    adb devices
+    exit 1
+  fi
+  UDID="$ONLINE_UDIDS"
+fi
+
+TEXT="${2:-${COMMENT_TEXT:-测试评论输入}}"
+SEND_FLAG="${3:-${SEND_COMMENT:-}}"
+DEVICE_NAME="${DEFAULT_DEVICE_NAME:-$(default_device_name "$UDID")}"
+SYSTEM_PORT="${DEFAULT_SYSTEM_PORT:-$(default_system_port "$UDID")}"
+
+if ! adb devices | grep -q "$UDID[[:space:]]*device"; then
+  echo "设备未在线：$UDID"
+  echo "请先检查：adb devices"
+  exit 1
+fi
+
+CMD=(.venv/bin/python -m app.debug_comment_input
+  --udid "$UDID" \
+  --device-name "$DEVICE_NAME" \
+  --system-port "$SYSTEM_PORT" \
+  --text "$TEXT")
+
+if [[ "$SEND_FLAG" == "--send" || "$SEND_FLAG" == "send" || "$SEND_FLAG" == "1" ]]; then
+  CMD+=(--send)
+fi
+
+"${CMD[@]}"

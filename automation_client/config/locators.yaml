@@ -1,0 +1,176 @@
+# 抖音页面元素定位配置。
+# 优先级建议：resource-id -> content-desc -> text -> xpath -> coordinate。
+# 坐标只作为最后兜底，真机分辨率或页面布局变化时容易失效。
+
+# 搜索按钮
+search_button:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/2ei"
+    - by: content-desc
+      value: ""
+    - by: text
+      value: ""
+    - by: xpath
+      value: '//android.widget.Button[@resource-id="com.ss.android.ugc.aweme:id/2ei"]'
+    - by: coordinate
+      x: 990
+      y: 196
+
+# 搜索输入框
+search_input:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/et_search_kw"
+    - by: content-desc
+      value: ""
+    - by: text
+      value: ""
+    - by: xpath
+      value: '//android.widget.EditText[@resource-id="com.ss.android.ugc.aweme:id/et_search_kw"]'
+
+# 搜索页确认搜索按钮
+search_submit_button:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/4un"
+    - by: content-desc
+      value: ""
+    - by: text
+      value: ""
+    - by: xpath
+      value: '//android.widget.TextView[@resource-id="com.ss.android.ugc.aweme:id/4un"]'
+    - by: coordinate
+      x:
+      y:
+
+# 用户 Tab
+user_tab:
+  strategies:
+    - by: resource-id
+      value: ""
+    - by: content-desc
+      value: ""
+    - by: text
+      value: ""
+    - by: xpath
+      value: ""
+    - by: coordinate
+      x:
+      y:
+
+# 医生主页入口
+doctor_page_entry:
+  strategies:
+    - by: resource-id
+      value: ""
+    - by: content-desc
+      value: ""
+    - by: text
+      value: ""
+    - by: xpath
+      value: ""
+    - by: coordinate
+      x:
+      y:
+
+# 视频入口
+video_entry:
+  strategies:
+    - by: resource-id
+      value: ""
+    - by: content-desc
+      value: ""
+    - by: text
+      value: ""
+    - by: xpath
+      value: ""
+    - by: coordinate
+      x:
+      y:
+
+# 视频作者名称
+video_author_name:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/+j"
+    - by: xpath
+      value: '//android.widget.TextView[@resource-id="com.ss.android.ugc.aweme:id/+j"]'
+
+# 点赞按钮
+like_button:
+  strategies:
+    - by: xpath
+      value: '//android.widget.LinearLayout[contains(@content-desc,"未点赞") and contains(@content-desc,"喜欢") and contains(@content-desc,"按钮")]'
+    - by: xpath
+      value: '//android.widget.LinearLayout[@content-desc="未点赞，喜欢1211，按钮"]'
+    - by: coordinate
+      x:
+      y:
+
+# 收藏按钮
+favorite_button:
+  strategies:
+    - by: xpath
+      value: '//android.widget.LinearLayout[contains(@content-desc,"未选中") and contains(@content-desc,"收藏") and contains(@content-desc,"按钮")]'
+    - by: xpath
+      value: '//android.widget.LinearLayout[@content-desc="未选中，收藏336，按钮"]'
+    - by: coordinate
+      x:
+      y:
+
+# 评论按钮
+comment_button:
+  strategies:
+    - by: xpath
+      value: '//android.widget.ImageView[contains(@content-desc,"评论") and contains(@content-desc,"按钮")]'
+    - by: xpath
+      value: '//android.widget.ImageView[@content-desc="评论87，按钮"]'
+    - by: coordinate
+      x:
+      y:
+
+# 评论输入框
+comment_input:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/eoy"
+    - by: xpath
+      value: '//android.widget.EditText[@resource-id="com.ss.android.ugc.aweme:id/eoy"]'
+
+# 发送按钮
+send_comment_button:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/es7"
+    - by: xpath
+      value: '//android.widget.TextView[@resource-id="com.ss.android.ugc.aweme:id/es7"]'
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/es6"
+    - by: xpath
+      value: '//android.widget.TextView[@resource-id="com.ss.android.ugc.aweme:id/es6"]'
+    - by: coordinate
+      x:
+      y:
+
+# 分享按钮，用于复制视频链接
+share_button:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/zk8"
+    - by: xpath
+      value: '//android.widget.LinearLayout[@resource-id="com.ss.android.ugc.aweme:id/zk8" or starts-with(@content-desc,"分享")]'
+
+# 复制链接按钮，用于读取视频链接
+copy_link_button:
+  strategies:
+    - by: xpath
+      value: '//android.widget.TextView[@resource-id="com.ss.android.ugc.aweme:id/zgs" and @text="分享链接"]'
+
+# 链接复制成功弹窗关闭按钮
+link_copied_close_button:
+  strategies:
+    - by: resource-id
+      value: "com.ss.android.ugc.aweme:id/zks"
+    - by: xpath
+      value: '//android.widget.ImageView[@resource-id="com.ss.android.ugc.aweme:id/zks"]'

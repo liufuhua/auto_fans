@@ -1,0 +1,37 @@
+server_url: "http://127.0.0.1:4723/wd/hub"
+platform_name: "Android"
+automation_name: "UiAutomator2"
+device_name: "Android"
+platform_version: ""
+
+# 二选一：
+# 1. 只启动已安装的内部测试包
+app_package: "com.ss.android.ugc.aweme"
+app_activity: ".splash.SplashActivity"
+
+# 2. 或指定 APK，由 Appium 安装后启动
+app_path: ""
+
+no_reset: true
+new_command_timeout: 180
+implicit_wait_seconds: 3
+launch_timeout_seconds: 30
+
+pages:
+  - name: "home"
+    expected_texts:
+      - "首页"
+    forbidden_texts:
+      - "崩溃"
+      - "网络异常"
+      - "加载失败"
+    screenshot: true
+
+  - name: "profile"
+    entry:
+      tap_text: "我"
+    expected_texts:
+      - "抖音号"
+    forbidden_texts:
+      - "加载失败"
+    screenshot: true

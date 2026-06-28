@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+api/.venv/
+automation_client/.venv/
+
+# Node
+node_modules/
+web_admin/node_modules/
+web_admin/dist/
+
+# Local environment
+.env
+api/.env
+automation_client/.env
+*.local
+
+# Logs and runtime output
+logs/
+*.log
+*.bk
+*.py.1
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.exe
+*.lnk
+*.egg-info/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Runtime/browser/device artifacts
+api/runtime/
+automation_client/runtime/
+tools/appium-apks/
+tools/*.apk
