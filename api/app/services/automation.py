@@ -14,7 +14,6 @@ from app.models.device import Device
 from app.models.device_action import DeviceDoctorActionRecord
 from app.models.device_task_pool import DeviceTaskPoolItem
 from app.models.doctor import Doctor, DoctorKeyword
-from app.models.doctor_province import DoctorProvince
 from app.schemas.automation import (
     AutomationDeviceConfigResponse,
     AutomationRuntimePayload,
@@ -32,12 +31,10 @@ from app.schemas.automation import (
     StartTaskResponse,
 )
 from app.services.daily_tasks import refresh_dispatched_task_progress
-from app.services.automation_timing import get_single_device_daily_task_limit
 
 
 RUNTIME_SINGLETON_ID = 1
 HOME_FEED_TASK_ID = 1
-POOL_ACTIVE_STATUSES = ("pending", "claimed", "running")
 logger = logging.getLogger(__name__)
 
 
@@ -231,10 +228,8 @@ def claim_matched_doctor_comment(
         _with_row_lock(
             db,
             select(CommentBankItem)
-            .join(DoctorKeyword, DoctorKeyword.id == CommentBankItem.keyword_id)
             .where(CommentBankItem.doctor_id == doctor.id)
             .where(CommentBankItem.status == "unused")
-            .where(DoctorKeyword.status == "active")
             .order_by(CommentBankItem.id.asc())
             .limit(1)
             .execution_options(populate_existing=True),
@@ -243,8 +238,8 @@ def claim_matched_doctor_comment(
     if comment is None:
         raise AppException("该医生暂无未使用评论", code="COMMENT_NOT_AVAILABLE", status_code=404)
 
-    keyword = db.get(DoctorKeyword, comment.keyword_id)
-    if keyword is None or keyword.status != "active":
+    keyword = db.get(DoctorKeyword, comment.keyword_id) if comment.keyword_id else None
+    if comment.keyword_id is not None and (keyword is None or keyword.status != "active"):
         raise AppException("评论关键词不存在或已停用", code="KEYWORD_NOT_AVAILABLE", status_code=404)
 
     now = now_beijing()
@@ -263,8 +258,8 @@ def claim_matched_doctor_comment(
         doctor_id=doctor.id,
         doctor_name=doctor.name,
         doctor_real_name=doctor.real_name,
-        keyword_id=keyword.id,
-        keyword=keyword.keyword,
+        keyword_id=keyword.id if keyword else None,
+        keyword=keyword.keyword if keyword else comment.search_word or "",
         search_word=comment.search_word,
         comment_bank_item_id=comment.id,
         comment_content=comment.content,
@@ -288,261 +283,6 @@ def _get_or_create_home_feed_task(db: Session) -> DailyTask:
     db.add(task)
     db.flush()
     return task
-
-
-def _claim_task_pool_item(
-    db: Session,
-    payload: ClaimTaskPayload,
-    device: Device,
-    pool_item: DeviceTaskPoolItem,
-) -> ClaimTaskResponse:
-    task = db.get(DailyTask, pool_item.task_id)
-    item = db.get(DailyTaskItem, pool_item.task_item_id)
-    doctor = db.get(Doctor, pool_item.doctor_id)
-    keyword = db.get(DoctorKeyword, pool_item.keyword_id)
-    comment = db.get(CommentBankItem, pool_item.comment_bank_item_id)
-    if (
-        task is None
-        or item is None
-        or doctor is None
-        or keyword is None
-        or comment is None
-        or task.status not in {"pending", "running"}
-        or task.dispatch_status != "dispatched"
-        or item.status not in {"pending", "running"}
-        or doctor.status != "active"
-        or keyword.status != "active"
-    ):
-        pool_item.status = "skipped"
-        pool_item.finished_at = now_beijing()
-        pool_item.fail_reason = "invalid task pool item"
-        db.add(pool_item)
-        db.commit()
-        return ClaimTaskResponse(has_task=False, reason="device_pool_empty")
-
-    now = now_beijing()
-    comment.status = "used"
-    comment.used_device_id = device.id
-    comment.used_account = payload.publish_account
-    comment.used_task_id = task.id
-    comment.used_at = comment.used_at or now
-
-    pool_item.status = "claimed"
-    pool_item.claimed_at = now
-
-    item.claimed_count += 1
-    item.status = "running"
-    task.status = "running"
-    task.started_at = task.started_at or now
-    device.runtime_status = "running"
-    device.last_heartbeat_at = now
-
-    db.add_all([comment, pool_item, item, task, device])
-    db.commit()
-    return ClaimTaskResponse(
-        has_task=True,
-        task_id=task.id,
-        task_item_id=item.id,
-        doctor_id=doctor.id,
-        doctor_name=doctor.name,
-        doctor_real_name=doctor.real_name,
-        keyword_id=keyword.id,
-        keyword=keyword.keyword,
-        search_word=comment.search_word,
-        comment_bank_item_id=comment.id,
-        comment_content=comment.content,
-    )
-
-
-def _claim_no_task_reason(db: Session, device_id: int, task_date: date) -> str:
-    active_task_ids = db.scalars(
-        select(DailyTask.id)
-        .where(DailyTask.task_date == task_date)
-        .where(DailyTask.status.in_(["pending", "running"]))
-    ).all()
-    if not active_task_ids:
-        dispatched_task_ids = db.scalars(
-            select(DailyTask.id)
-            .where(DailyTask.task_date == task_date)
-            .where(DailyTask.dispatch_status == "dispatched")
-        ).all()
-        if dispatched_task_ids and not _has_active_pool_items(db, dispatched_task_ids):
-            return "task_completed"
-        return "no_task"
-
-    dispatched_task_ids = db.scalars(
-        select(DailyTask.id)
-        .where(DailyTask.id.in_(active_task_ids))
-        .where(DailyTask.dispatch_status == "dispatched")
-    ).all()
-    if not dispatched_task_ids:
-        return "not_dispatched"
-
-    device_pool_count = (
-        db.scalar(
-            select(func.count(DeviceTaskPoolItem.id))
-            .where(DeviceTaskPoolItem.task_id.in_(dispatched_task_ids))
-            .where(DeviceTaskPoolItem.device_id == device_id)
-        )
-        or 0
-    )
-    if device_pool_count > 0 and not _has_active_pool_items(db, dispatched_task_ids):
-        return "task_completed"
-    return "device_pool_empty"
-
-
-def _has_active_pool_items(db: Session, task_ids: list[int]) -> bool:
-    return (
-        db.scalar(
-            select(func.count(DeviceTaskPoolItem.id))
-            .where(DeviceTaskPoolItem.task_id.in_(task_ids))
-            .where(DeviceTaskPoolItem.status.in_(POOL_ACTIVE_STATUSES))
-        )
-        or 0
-    ) > 0
-
-
-def _claim_task_dynamic_legacy(db: Session, payload: ClaimTaskPayload) -> ClaimTaskResponse:
-    """Legacy dynamic claim path kept for rollback while V2 task-pool claim stabilizes."""
-    device = get_enabled_device_by_udid(db, payload.udid)
-    today = date.today()
-    daily_task_limit = get_single_device_daily_task_limit(db)
-    if daily_task_limit > 0 and _device_claimed_count_for_date(db, device.id, today) >= daily_task_limit:
-        return ClaimTaskResponse(has_task=False, reason="daily_limit_reached")
-
-    rows = db.execute(
-        select(DailyTaskItem.id)
-        .join(DailyTask, DailyTask.id == DailyTaskItem.task_id)
-        .join(Doctor, Doctor.id == DailyTaskItem.doctor_id)
-        .join(DoctorKeyword, DoctorKeyword.id == DailyTaskItem.keyword_id)
-        .where(DailyTask.task_date == today)
-        .where(DailyTask.status.in_(["pending", "running"]))
-        .where(DailyTaskItem.status.in_(["pending", "running"]))
-        .where(DailyTaskItem.claimed_count < DailyTaskItem.target_count)
-        .where(Doctor.status == "active")
-        .where(DoctorKeyword.status == "active")
-        .order_by(DailyTask.id.asc(), DailyTaskItem.sort_order.asc(), DailyTaskItem.id.asc())
-    ).all()
-
-    for (item_id,) in rows:
-        locked_item = db.scalar(
-            _with_row_lock(
-                db,
-                select(DailyTaskItem)
-                .where(DailyTaskItem.id == item_id)
-                .where(DailyTaskItem.status.in_(["pending", "running"]))
-                .where(DailyTaskItem.claimed_count < DailyTaskItem.target_count)
-                .execution_options(populate_existing=True),
-                skip_locked=False,
-            )
-        )
-        if locked_item is None:
-            continue
-
-        item = locked_item
-        task = db.get(DailyTask, item.task_id)
-        doctor = db.get(Doctor, item.doctor_id)
-        keyword = db.get(DoctorKeyword, item.keyword_id)
-        if (
-            task is None
-            or doctor is None
-            or keyword is None
-            or task.status not in {"pending", "running"}
-            or doctor.status != "active"
-            or keyword.status != "active"
-        ):
-            db.rollback()
-            continue
-
-        if not _device_matches_doctor_region(db, device, doctor):
-            db.rollback()
-            continue
-
-        already_acted = db.scalar(
-            select(DeviceDoctorActionRecord.id).where(
-                DeviceDoctorActionRecord.device_id == device.id,
-                DeviceDoctorActionRecord.doctor_id == item.doctor_id,
-                DeviceDoctorActionRecord.keyword_id == item.keyword_id,
-                DeviceDoctorActionRecord.action_type == "comment",
-                DeviceDoctorActionRecord.action_date == task.task_date,
-            )
-        )
-        if already_acted:
-            db.rollback()
-            continue
-
-        comment_stmt = (
-            select(CommentBankItem)
-            .where(CommentBankItem.doctor_id == item.doctor_id)
-            .where(CommentBankItem.keyword_id == item.keyword_id)
-            .where(CommentBankItem.status == "unused")
-            .order_by(CommentBankItem.id.asc())
-            .limit(1)
-        )
-        comment = db.scalar(_with_row_lock(db, comment_stmt))
-        if comment is None:
-            db.rollback()
-            continue
-
-        now = now_beijing()
-        comment.status = "used"
-        comment.used_device_id = device.id
-        comment.used_account = payload.publish_account
-        comment.used_task_id = task.id
-        comment.used_at = now
-
-        item.claimed_count += 1
-        item.status = "running"
-        task.status = "running"
-        task.started_at = task.started_at or now
-        device.runtime_status = "running"
-        device.last_heartbeat_at = now
-
-        db.add_all([comment, item, task, device])
-        db.commit()
-        return ClaimTaskResponse(
-            has_task=True,
-            task_id=task.id,
-            task_item_id=item.id,
-            doctor_id=doctor.id,
-            doctor_name=doctor.name,
-            doctor_real_name=doctor.real_name,
-            keyword_id=keyword.id,
-            keyword=keyword.keyword,
-            search_word=comment.search_word,
-            comment_bank_item_id=comment.id,
-            comment_content=comment.content,
-        )
-
-    db.rollback()
-    return ClaimTaskResponse(has_task=False)
-
-
-def _device_claimed_count_for_date(db: Session, device_id: int, task_date: date) -> int:
-    return (
-        db.scalar(
-            select(func.count(CommentBankItem.id))
-            .join(DailyTask, DailyTask.id == CommentBankItem.used_task_id)
-            .where(CommentBankItem.used_device_id == device_id)
-            .where(DailyTask.task_date == task_date)
-        )
-        or 0
-    )
-
-
-def _device_matches_doctor_region(db: Session, device: Device, doctor: Doctor) -> bool:
-    device_province = (device.province or "").strip()
-    if not device_province:
-        return False
-    return (
-        db.scalar(
-            select(DoctorProvince.id)
-            .where(DoctorProvince.doctor_id == doctor.id)
-            .where(DoctorProvince.province == device_province)
-            .limit(1)
-        )
-        is not None
-    )
 
 
 def _with_row_lock(db: Session, statement, *, skip_locked: bool = True):
@@ -809,7 +549,7 @@ def _is_home_feed_comment_claim(db: Session, comment_bank_item_id: int, device_i
 
 def _get_home_feed_comment_context(
     db: Session, comment_bank_item_id: int, device: Device
-) -> tuple[DailyTask, CommentBankItem, Doctor, DoctorKeyword]:
+) -> tuple[DailyTask, CommentBankItem, Doctor, DoctorKeyword | None]:
     task = _get_or_create_home_feed_task(db)
     comment = db.get(CommentBankItem, comment_bank_item_id)
     if comment is None:
@@ -827,8 +567,8 @@ def _get_home_feed_comment_context(
     doctor = db.get(Doctor, comment.doctor_id)
     if doctor is None or doctor.status != "active":
         raise AppException("医生不存在或已停用", code="DOCTOR_NOT_AVAILABLE", status_code=404)
-    keyword = db.get(DoctorKeyword, comment.keyword_id)
-    if keyword is None or keyword.status != "active":
+    keyword = db.get(DoctorKeyword, comment.keyword_id) if comment.keyword_id else None
+    if comment.keyword_id is not None and (keyword is None or keyword.status != "active"):
         raise AppException("评论关键词不存在或已停用", code="KEYWORD_NOT_AVAILABLE", status_code=404)
     return task, comment, doctor, keyword
 
@@ -856,7 +596,7 @@ def _start_home_feed_task(
         task_id=task.id,
         task_item_id=None,
         doctor_id=doctor.id,
-        keyword_id=keyword.id,
+        keyword_id=keyword.id if keyword else None,
         device_id=device.id,
         comment_bank_item_id=comment.id,
         publish_account=payload.publish_account,
@@ -901,7 +641,7 @@ def _report_home_feed_task(
             task_id=task.id,
             task_item_id=None,
             doctor_id=doctor.id,
-            keyword_id=keyword.id,
+            keyword_id=keyword.id if keyword else None,
             device_id=device.id,
             comment_bank_item_id=comment.id,
             publish_account=payload.publish_account,
@@ -914,7 +654,7 @@ def _report_home_feed_task(
     result.task_id = task.id
     result.task_item_id = None
     result.doctor_id = doctor.id
-    result.keyword_id = keyword.id
+    result.keyword_id = keyword.id if keyword else None
     result.device_id = device.id
     result.comment_bank_item_id = comment.id
     result.publish_account = payload.publish_account
@@ -933,38 +673,40 @@ def _report_home_feed_task(
     comment.used_task_id = task.id
     comment.used_at = comment.used_at or now
 
-    action_record = db.scalar(
-        select(DeviceDoctorActionRecord).where(
-            DeviceDoctorActionRecord.device_id == device.id,
-            DeviceDoctorActionRecord.doctor_id == doctor.id,
-            DeviceDoctorActionRecord.keyword_id == keyword.id,
-            DeviceDoctorActionRecord.action_type == "comment",
-            DeviceDoctorActionRecord.action_date == task.task_date,
+    action_record = None
+    if keyword is not None:
+        action_record = db.scalar(
+            select(DeviceDoctorActionRecord).where(
+                DeviceDoctorActionRecord.device_id == device.id,
+                DeviceDoctorActionRecord.doctor_id == doctor.id,
+                DeviceDoctorActionRecord.keyword_id == keyword.id,
+                DeviceDoctorActionRecord.action_type == "comment",
+                DeviceDoctorActionRecord.action_date == task.task_date,
+            )
         )
-    )
-    if action_record is None:
-        action_record = DeviceDoctorActionRecord(
-            device_id=device.id,
-            doctor_id=doctor.id,
-            keyword_id=keyword.id,
-            task_id=task.id,
-            action_type="comment",
-            action_date=task.task_date,
-            status=payload.status,
-            acted_at=now,
-        )
-    action_record.task_id = task.id
-    action_record.result_id = result.id if result.id else None
-    action_record.status = payload.status
-    action_record.action_date = task.task_date
-    action_record.acted_at = now
+        if action_record is None:
+            action_record = DeviceDoctorActionRecord(
+                device_id=device.id,
+                doctor_id=doctor.id,
+                keyword_id=keyword.id,
+                task_id=task.id,
+                action_type="comment",
+                action_date=task.task_date,
+                status=payload.status,
+                acted_at=now,
+            )
+        action_record.task_id = task.id
+        action_record.result_id = result.id if result.id else None
+        action_record.status = payload.status
+        action_record.action_date = task.task_date
+        action_record.acted_at = now
 
     device.runtime_status = "idle"
     device.last_heartbeat_at = now
-    db.add_all([result, comment, action_record, device])
+    db.add_all([item for item in [result, comment, action_record, device] if item is not None])
     db.commit()
     db.refresh(result)
-    if action_record.result_id is None:
+    if action_record is not None and action_record.result_id is None:
         action_record.result_id = result.id
         db.add(action_record)
         db.commit()

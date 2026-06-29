@@ -18,7 +18,7 @@ from app.services.comment_recheck import normalize_comment_recheck_status
 
 
 def _automation_result_base_statement() -> Select[
-    tuple[AutomationResult, DailyTask, str, str, str, CommentRecheckRecord | None]
+    tuple[AutomationResult, DailyTask, str, str | None, str, CommentRecheckRecord | None]
 ]:
     return (
         select(
@@ -31,7 +31,7 @@ def _automation_result_base_statement() -> Select[
         )
         .join(DailyTask, DailyTask.id == AutomationResult.task_id)
         .join(Doctor, Doctor.id == AutomationResult.doctor_id)
-        .join(DoctorKeyword, DoctorKeyword.id == AutomationResult.keyword_id)
+        .outerjoin(DoctorKeyword, DoctorKeyword.id == AutomationResult.keyword_id)
         .join(Device, Device.id == AutomationResult.device_id)
         .outerjoin(
             CommentRecheckRecord,
@@ -42,14 +42,14 @@ def _automation_result_base_statement() -> Select[
 
 
 def _apply_automation_result_filters(
-    statement: Select[tuple[AutomationResult, DailyTask, str, str, str, CommentRecheckRecord | None]],
+    statement: Select[tuple[AutomationResult, DailyTask, str, str | None, str, CommentRecheckRecord | None]],
     task_id: int | None,
     doctor_id: int | None,
     keyword_id: int | None,
     device_id: int | None,
     status: str | None,
     keyword: str | None,
-) -> Select[tuple[AutomationResult, DailyTask, str, str, str, CommentRecheckRecord | None]]:
+) -> Select[tuple[AutomationResult, DailyTask, str, str | None, str, CommentRecheckRecord | None]]:
     if task_id:
         statement = statement.where(AutomationResult.task_id == task_id)
     if doctor_id:
@@ -76,7 +76,7 @@ def _to_automation_result_item_read(
     result: AutomationResult,
     task: DailyTask,
     doctor_name: str,
-    keyword: str,
+    keyword: str | None,
     device_name: str,
     recheck_record: CommentRecheckRecord | None,
 ) -> AutomationResultItemRead:
@@ -87,7 +87,7 @@ def _to_automation_result_item_read(
         doctor_id=result.doctor_id,
         doctor_name=doctor_name,
         keyword_id=result.keyword_id,
-        keyword=keyword,
+        keyword=keyword or "",
         device_id=result.device_id,
         device_name=device_name,
         publish_account=result.publish_account,
@@ -165,7 +165,7 @@ def export_automation_result_summary_by_date_range(
         )
         .join(DailyTask, DailyTask.id == AutomationResult.task_id)
         .join(Doctor, Doctor.id == AutomationResult.doctor_id)
-        .join(DoctorKeyword, DoctorKeyword.id == AutomationResult.keyword_id)
+        .outerjoin(DoctorKeyword, DoctorKeyword.id == AutomationResult.keyword_id)
         .where(DailyTask.task_date >= start_date)
         .where(DailyTask.task_date <= end_date)
         .where(AutomationResult.status == "success")
@@ -176,6 +176,7 @@ def export_automation_result_summary_by_date_range(
             Doctor.real_name,
             DoctorKeyword.id,
             DoctorKeyword.keyword,
+            AutomationResult.keyword_id,
         )
         .order_by(
             DailyTask.task_date.asc(),
@@ -192,7 +193,7 @@ def export_automation_result_summary_by_date_range(
 
     for row_date, doctor_name, real_name, keyword_text, count in rows:
         export_doctor_name = (real_name or "").strip() or doctor_name
-        sheet.append([row_date, export_doctor_name, keyword_text, int(count)])
+        sheet.append([row_date, export_doctor_name, keyword_text or "", int(count)])
 
     header_fill = PatternFill("solid", fgColor="D9EAF7")
     header_font = Font(bold=True)

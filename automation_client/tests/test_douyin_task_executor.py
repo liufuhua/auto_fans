@@ -14,7 +14,6 @@ from app.douyin_task_executor import (
     DEVICE_TAP_PROFILES,
     DouyinAppiumExecutorConfig,
     DouyinAppiumTaskExecutor,
-    SearchResultNotFoundError,
 )
 from app.appium_driver import ManagedAppiumDriver
 
@@ -109,100 +108,15 @@ class FakeHomeFeedApiClient:
         return ReportTaskResult(result_id=kwargs["result_id"], status=kwargs["status"])
 
 
-class FakeSearchInputElement:
-    def __init__(self, rect: dict[str, int] | None = None) -> None:
-        self.rect = rect or {"x": 10, "y": 20, "width": 300, "height": 60}
-        self.cleared = False
-        self.clicked = False
-        self.sent_texts: list[str] = []
-
-    def is_displayed(self) -> bool:
-        return True
-
-    def clear(self) -> None:
-        self.cleared = True
-
-    def click(self) -> None:
-        self.clicked = True
-
-    def send_keys(self, text: str) -> None:
-        self.sent_texts.append(text)
-
-
-class MissingSearchInputActions:
-    def __init__(self, driver: object) -> None:
-        self.driver = driver
-
-    def _wait_visible(self, locator_name: str):
-        assert locator_name == "search_input"
-        raise DouyinLocatorError("search_input not found")
-
-
-class HuaweiSearchFallbackDriver:
-    def __init__(self) -> None:
-        self.element = FakeSearchInputElement()
-        self.find_calls: list[tuple[str, str]] = []
-        self.click_gestures: list[dict[str, int]] = []
-        self.mobile_typed_texts: list[str] = []
-        self.keycodes: list[int] = []
-        self.quit_count = 0
-
-    @property
-    def page_source(self) -> str:
-        return """
-        <hierarchy>
-          <node class="android.widget.TextView" text="搜索" bounds="[900,60][1040,140]" />
-          <node class="android.widget.EditText" text="" resource-id="custom.search.input" bounds="[80,80][860,150]" />
-        </hierarchy>
-        """
-
-    def find_elements(self, by: str, value: str):
-        self.find_calls.append((by, value))
-        if value == "com.ss.android.ugc.aweme:id/et_search_kw":
-            return []
-        if "android.widget.EditText" in value:
-            return [self.element]
-        return []
-
-    def get_window_size(self) -> dict[str, int]:
-        return {"width": 1080, "height": 2408}
-
-    def execute_script(self, name: str, payload: dict[str, object]) -> None:
-        if name == "mobile: clickGesture":
-            self.click_gestures.append(payload)
-        if name == "mobile: type":
-            self.mobile_typed_texts.append(str(payload["text"]))
-
-    def press_keycode(self, keycode: int) -> None:
-        self.keycodes.append(keycode)
-
-    def quit(self) -> None:
-        self.quit_count += 1
-
-
 class MissingCommentButtonActions:
     def _click(self, locator_name: str) -> None:
         assert locator_name == "comment_button"
         raise DouyinLocatorError("comment_button not found")
 
 
-class FakeSearchActions:
+class FakeActions:
     def __init__(self, driver: object) -> None:
         self.driver = driver
-
-
-class SearchAttemptRecorder:
-    def __init__(self, *, fail_terms: set[str] | None = None) -> None:
-        self.fail_terms = fail_terms or set()
-        self.calls: list[str] = []
-        self.targets: list[str] = []
-
-    def run(self, *, search_text: str, **kwargs):
-        self.calls.append(search_text)
-        self.targets.append(kwargs["target_author"])
-        if search_text in self.fail_terms:
-            raise SearchResultNotFoundError(search_text)
-        return f"matched by {search_text}", kwargs["actions"].driver
 
 
 def make_device() -> BackendDeviceConfig:
@@ -271,10 +185,16 @@ def test_executor_applies_backend_timing_settings() -> None:
                 max_seconds=4.5,
             ),
             AutomationTimingSettingResult(
-                key="douyin_restart_interval",
-                label="退出和重启抖音间隔时间",
-                min_seconds=30,
-                max_seconds=30,
+                key="douyin_exit_interval",
+                label="退出抖音时间",
+                min_seconds=20,
+                max_seconds=20,
+            ),
+            AutomationTimingSettingResult(
+                key="douyin_reopen_interval",
+                label="重启抖音时间",
+                min_seconds=25,
+                max_seconds=25,
             ),
         ],
     )
@@ -283,13 +203,14 @@ def test_executor_applies_backend_timing_settings() -> None:
     assert updated.watch_max_seconds == 60
     assert updated.comment_pre_input_min_seconds == 2.5
     assert updated.comment_pre_input_max_seconds == 4.5
-    assert updated.douyin_restart_interval_minutes == 30
+    assert updated.douyin_exit_interval_minutes == 20
+    assert updated.douyin_reopen_interval_minutes == 25
     assert config.watch_min_seconds == 15
     assert config.watch_max_seconds == 300
 
 
-def test_force_stop_douyin_waits_restart_interval_in_minutes(monkeypatch) -> None:
-    config = DouyinAppiumExecutorConfig(douyin_restart_interval_minutes=30)
+def test_force_stop_douyin_waits_exit_interval_in_minutes(monkeypatch) -> None:
+    config = DouyinAppiumExecutorConfig(douyin_exit_interval_minutes=20)
     executor = DouyinAppiumTaskExecutor(config=config)
     args = executor._build_args(make_device())
     commands = []
@@ -310,7 +231,43 @@ def test_force_stop_douyin_waits_restart_interval_in_minutes(monkeypatch) -> Non
     executor._force_stop_douyin(args)
 
     assert commands == [["adb", "-s", args.udid, "shell", "am", "force-stop", args.package_name]]
-    assert sleeps == [1800]
+    assert sleeps == [1200]
+
+
+def test_reopen_interval_waits_before_next_open_only_after_force_stop(monkeypatch) -> None:
+    config = DouyinAppiumExecutorConfig(
+        after_open_seconds=0,
+        douyin_exit_interval_minutes=0,
+        douyin_reopen_interval_minutes=20,
+    )
+    executor = DouyinAppiumTaskExecutor(config=config)
+    args = executor._build_args(make_device())
+    driver = FakeDriver([HOME_SOURCE])
+    actions = DouyinActions(
+        driver=driver,
+        locators=LocatorRepository({}),
+        udid=args.udid,
+        package_name=args.package_name,
+        wait_timeout_seconds=args.wait_timeout_seconds,
+        task_id="test",
+    )
+    sleeps = []
+
+    class Completed:
+        stdout = ""
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr("app.douyin_task_executor.subprocess.run", lambda command, **kwargs: Completed())
+    monkeypatch.setattr("app.douyin_task_executor.time.sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(executor, "_reconnect_driver", lambda *, args, driver: driver)
+
+    executor._ensure_douyin_home_page(driver=driver, actions=actions, args=args)
+    executor._force_stop_douyin(args)
+    executor._ensure_douyin_home_page(driver=driver, actions=actions, args=args)
+    executor._ensure_douyin_home_page(driver=driver, actions=actions, args=args)
+
+    assert sleeps == [1200]
 
 
 def test_executor_shell_script_command_uses_script_directly_on_unix(monkeypatch) -> None:
@@ -346,39 +303,6 @@ def test_executor_shell_script_command_uses_bash_on_windows(monkeypatch) -> None
         "-lc",
         "/e/android_auto_test/automation_client/scripts/clear_session.sh R5CW11CKN0B 8203",
     ]
-
-
-def test_executor_finds_video_tab_when_it_is_after_user_and_product() -> None:
-    source = """
-    <hierarchy>
-      <node text="综合" resource-id="android:id/text1" clickable="true" bounds="[51,247][209,387]" />
-      <node text="用户" resource-id="android:id/text1" clickable="true" bounds="[209,247][367,387]" />
-      <node text="商品" resource-id="android:id/text1" clickable="true" bounds="[367,247][525,387]" />
-      <node text="视频" resource-id="android:id/text1" clickable="true" bounds="[525,247][683,387]" />
-    </hierarchy>
-    """
-
-    candidates = DouyinAppiumTaskExecutor._search_tab_candidates_from_source(source)
-
-    assert [item["label"] for item in candidates] == ["综合", "用户", "商品", "视频"]
-    video = next(item for item in candidates if item["label"] == "视频")
-    assert video["click_bounds"] == (525, 247, 683, 387)
-
-
-def test_executor_finds_video_tab_when_it_is_second() -> None:
-    source = """
-    <hierarchy>
-      <node text="综合" resource-id="android:id/text1" clickable="true" bounds="[51,247][209,387]" />
-      <node text="视频" resource-id="android:id/text1" clickable="true" bounds="[209,247][367,387]" />
-      <node text="用户" resource-id="android:id/text1" clickable="true" bounds="[367,247][525,387]" />
-    </hierarchy>
-    """
-
-    candidates = DouyinAppiumTaskExecutor._search_tab_candidates_from_source(source)
-
-    assert [item["label"] for item in candidates] == ["综合", "视频", "用户"]
-    video = next(item for item in candidates if item["label"] == "视频")
-    assert video["click_bounds"] == (209, 247, 367, 387)
 
 
 def test_executor_preflight_opens_douyin_when_already_home(monkeypatch) -> None:
@@ -496,225 +420,6 @@ def test_executor_preflight_leaves_search_page_before_restart(monkeypatch) -> No
 
     assert restart_calls == []
     assert safe_click_calls == [("search_back_button", "退出搜索页")]
-
-
-def test_executor_retry_search_text_uses_keyword_and_real_name() -> None:
-    assert (
-        DouyinAppiumTaskExecutor._build_retry_search_text(
-            keyword="脑膜瘤",
-            doctor_name="北京三博张明山",
-            doctor_real_name="张明山",
-        )
-        == "脑膜瘤 张明山"
-    )
-
-
-def test_executor_retry_search_text_falls_back_to_nickname_when_real_name_empty() -> None:
-    assert (
-        DouyinAppiumTaskExecutor._build_retry_search_text(
-            keyword="脑膜瘤",
-            doctor_name="北京三博张明山",
-            doctor_real_name="",
-        )
-        == "脑膜瘤 北京三博张明山"
-    )
-
-
-def test_executor_search_plan_stops_after_name_only_success(monkeypatch) -> None:
-    executor = DouyinAppiumTaskExecutor()
-    args = executor._build_args(make_device())
-    driver = object()
-    actions = FakeSearchActions(driver)
-    waits: dict[str, float] = {}
-    recorder = SearchAttemptRecorder()
-
-    monkeypatch.setattr(executor, "_search_and_open_matching_video", recorder.run)
-
-    matched_author, active_driver = executor._find_with_name_first_search_plan(
-        actions=actions,
-        args=args,
-        doctor_name="Doctor Gao",
-        keyword_search_text="skull repair",
-        combined_search_text="skull repair Doctor Gao",
-        waits=waits,
-    )
-
-    assert matched_author == "matched by skull repair"
-    assert active_driver is driver
-    assert recorder.calls == ["skull repair"]
-    assert recorder.targets == ["Doctor Gao"]
-
-
-def test_executor_search_plan_retries_with_combined_term_after_name_not_found(
-    monkeypatch,
-) -> None:
-    executor = DouyinAppiumTaskExecutor()
-    args = executor._build_args(make_device())
-    first_driver = object()
-    second_driver = object()
-    actions = FakeSearchActions(first_driver)
-    waits: dict[str, float] = {}
-    recorder = SearchAttemptRecorder(fail_terms={"skull repair"})
-    rebuilt_actions: list[tuple[object, str]] = []
-
-    monkeypatch.setattr(executor, "_search_and_open_matching_video", recorder.run)
-    monkeypatch.setattr(
-        executor,
-        "_ensure_douyin_home_page",
-        lambda *, driver, actions, args: second_driver,
-    )
-
-    def fake_build_actions(*, driver, args, task_id):
-        rebuilt_actions.append((driver, task_id))
-        return FakeSearchActions(driver)
-
-    monkeypatch.setattr(executor, "_build_actions", fake_build_actions)
-
-    matched_author, active_driver = executor._find_with_name_first_search_plan(
-        actions=actions,
-        args=args,
-        doctor_name="Doctor Gao",
-        keyword_search_text="skull repair",
-        combined_search_text="skull repair Doctor Gao",
-        waits=waits,
-    )
-
-    assert matched_author == "matched by skull repair Doctor Gao"
-    assert active_driver is second_driver
-    assert recorder.calls == ["skull repair", "skull repair Doctor Gao"]
-    assert recorder.targets == ["Doctor Gao", "Doctor Gao"]
-    assert rebuilt_actions == [
-        (first_driver, "worker_search_task_before_retry_home"),
-        (second_driver, "worker_search_task_retry_combined"),
-    ]
-
-
-def test_executor_search_plan_uses_latest_driver_after_keyword_not_found(monkeypatch) -> None:
-    executor = DouyinAppiumTaskExecutor()
-    args = executor._build_args(make_device())
-    original_driver = object()
-    latest_failed_driver = object()
-    home_driver = object()
-    actions = FakeSearchActions(original_driver)
-    waits: dict[str, float] = {}
-    home_calls: list[object] = []
-    calls: list[str] = []
-
-    def fake_search(*, search_text: str, actions, **kwargs):
-        calls.append(search_text)
-        if search_text == "skull repair":
-            error = SearchResultNotFoundError(search_text)
-            error.active_driver = latest_failed_driver
-            raise error
-        return f"matched by {search_text}", actions.driver
-
-    def fake_ensure_home(*, driver, actions, args):
-        home_calls.append(driver)
-        return home_driver
-
-    monkeypatch.setattr(executor, "_search_and_open_matching_video", fake_search)
-    monkeypatch.setattr(executor, "_ensure_douyin_home_page", fake_ensure_home)
-    monkeypatch.setattr(
-        executor,
-        "_build_actions",
-        lambda *, driver, args, task_id: FakeSearchActions(driver),
-    )
-
-    matched_author, active_driver = executor._find_with_name_first_search_plan(
-        actions=actions,
-        args=args,
-        doctor_name="Doctor Gao",
-        keyword_search_text="skull repair",
-        combined_search_text="skull repair Doctor Gao",
-        waits=waits,
-    )
-
-    assert matched_author == "matched by skull repair Doctor Gao"
-    assert active_driver is home_driver
-    assert calls == ["skull repair", "skull repair Doctor Gao"]
-    assert home_calls == [latest_failed_driver]
-
-
-def test_executor_search_plan_raises_when_both_terms_not_found(monkeypatch) -> None:
-    executor = DouyinAppiumTaskExecutor()
-    args = executor._build_args(make_device())
-    driver = object()
-    actions = FakeSearchActions(driver)
-    waits: dict[str, float] = {}
-    recorder = SearchAttemptRecorder(
-        fail_terms={"skull repair", "skull repair Doctor Gao"}
-    )
-
-    monkeypatch.setattr(executor, "_search_and_open_matching_video", recorder.run)
-    monkeypatch.setattr(
-        executor,
-        "_ensure_douyin_home_page",
-        lambda *, driver, actions, args: driver,
-    )
-    monkeypatch.setattr(
-        executor,
-        "_build_actions",
-        lambda *, driver, args, task_id: FakeSearchActions(driver),
-    )
-
-    try:
-        executor._find_with_name_first_search_plan(
-            actions=actions,
-            args=args,
-            doctor_name="Doctor Gao",
-            keyword_search_text="skull repair",
-            combined_search_text="skull repair Doctor Gao",
-            waits=waits,
-        )
-    except SearchResultNotFoundError as exc:
-        assert str(exc) == "skull repair Doctor Gao"
-    else:
-        raise AssertionError("expected SearchResultNotFoundError")
-
-    assert recorder.calls == ["skull repair", "skull repair Doctor Gao"]
-    assert recorder.targets == ["Doctor Gao", "Doctor Gao"]
-
-
-def test_huawei_search_input_falls_back_to_visible_edit_text(monkeypatch) -> None:
-    config = DouyinAppiumExecutorConfig(
-        after_input_min_seconds=0,
-        after_input_max_seconds=0,
-        after_search_min_seconds=0,
-        after_search_max_seconds=0,
-    )
-    executor = DouyinAppiumTaskExecutor(config=config)
-    device = BackendDeviceConfig(
-        id=7,
-        name="huawei_006",
-        udid="MYQUT20414008419",
-        system_port=8230,
-        enabled_status="enabled",
-        device_model="huawei_nova_se6",
-        appium_server_url="http://127.0.0.1:4721",
-    )
-    args = executor._build_args(device)
-    driver = HuaweiSearchFallbackDriver()
-    actions = MissingSearchInputActions(driver)
-    waits: dict[str, float] = {}
-
-    monkeypatch.setattr(
-        "app.douyin_task_executor.random_seconds",
-        lambda min_seconds, max_seconds, label: 0,
-    )
-    monkeypatch.setattr(executor, "_reconnect_driver", lambda *, args, driver: driver)
-    monkeypatch.setattr(executor, "_submit_search", lambda driver: driver.press_keycode(66))
-
-    result_driver = executor._input_search_text_submit_and_reconnect(
-        actions=actions,
-        args=args,
-        search_text="腱鞘炎手术",
-        waits=waits,
-    )
-
-    assert result_driver is driver
-    assert driver.mobile_typed_texts == ["腱鞘炎手术"]
-    assert driver.keycodes == [66]
-    assert waits == {"after_input": 0, "after_search": 0}
 
 
 def test_executor_exits_douyin_with_clear_reason_when_comment_button_missing(monkeypatch) -> None:
@@ -846,7 +551,7 @@ def test_home_feed_matched_author_claims_comment_and_reports_task_1(monkeypatch)
     args = executor._build_args(make_device())
     api_client = FakeHomeFeedApiClient()
     matched_doctor = ClaimTaskDoctorResult(doctor_id=31, doctor_name="Doctor Gao")
-    actions = FakeSearchActions(driver)
+    actions = FakeActions(driver)
     calls = []
 
     monkeypatch.setattr(

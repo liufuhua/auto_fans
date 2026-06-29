@@ -28,7 +28,10 @@ const login = async () => {
 
   await authStore.login(form)
   ElMessage.success('登录成功')
-  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
+  const redirect =
+    typeof route.query.redirect === 'string' && route.query.redirect !== '/dashboard'
+      ? route.query.redirect
+      : '/automation-results'
   router.replace(redirect)
 }
 </script>
@@ -36,7 +39,7 @@ const login = async () => {
 <template>
   <main class="login-page">
     <section class="login-panel">
-      <div class="login-title">抖音测试管理后台</div>
+      <div class="login-title">抖音铁粉工具</div>
       <p class="login-subtitle">后台用户登录</p>
 
       <el-form

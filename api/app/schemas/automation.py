@@ -107,9 +107,9 @@ class ClaimMatchedDoctorCommentResponse(BaseModel):
     doctor_id: int = Field(serialization_alias="doctorId")
     doctor_name: str = Field(serialization_alias="doctorName")
     doctor_real_name: str = Field(default="", serialization_alias="doctorRealName")
-    keyword_id: int = Field(serialization_alias="keywordId")
-    keyword: str
-    search_word: str = Field(serialization_alias="searchWord")
+    keyword_id: int | None = Field(default=None, serialization_alias="keywordId")
+    keyword: str = ""
+    search_word: str | None = Field(default=None, serialization_alias="searchWord")
     comment_bank_item_id: int = Field(serialization_alias="commentBankItemId")
     comment_content: str = Field(serialization_alias="commentContent")
 

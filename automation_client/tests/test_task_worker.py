@@ -106,66 +106,6 @@ def make_device(name="device_01", udid="FMR0223830012928") -> BackendDeviceConfi
     )
 
 
-def test_worker_heartbeat_claim_and_execute_task() -> None:
-    task = ClaimTaskResult(
-        has_task=True,
-        task_id=1,
-        task_item_id=2,
-        doctor_id=3,
-        doctor_name="张明山",
-        keyword_id=4,
-        keyword="脑膜瘤",
-        search_word="脑膜瘤",
-        comment_bank_item_id=5,
-        comment_content="测试评论",
-    )
-    api_client = FakeApiClient([task])
-    executor = RecordingExecutor()
-    device = make_device()
-    worker = TaskWorker(
-        device=device,
-        api_client=api_client,  # type: ignore[arg-type]
-        publish_account="测试账号01",
-        poll_interval_seconds=0,
-        executor=executor,
-        runtime_dir="runtime",
-    )
-
-    worker.run(max_iterations=1)
-
-    assert api_client.heartbeats[0]["udid"] == "FMR0223830012928"
-    assert api_client.heartbeats[0]["runtime_status"] == "idle"
-    assert api_client.claim_requests[0] == {
-        "udid": "FMR0223830012928",
-        "publish_account": "测试账号01",
-    }
-    assert api_client.start_requests[0] == {
-        "task_item_id": 2,
-        "udid": "FMR0223830012928",
-        "comment_bank_item_id": 5,
-        "publish_account": "测试账号01",
-    }
-    assert executor.tasks[0][0] is task
-    assert executor.tasks[0][1] == StartTaskResult(result_id=8, status="running")
-    assert executor.tasks[0][2] is device
-    assert api_client.report_requests[0] == {
-        "task_item_id": 2,
-        "udid": "FMR0223830012928",
-        "result_id": 8,
-        "comment_bank_item_id": 5,
-        "publish_account": "测试账号01",
-        "status": "success",
-        "video_link": "https://v.douyin.com/test/",
-        "result_summary": None,
-        "fail_reason": None,
-        "screenshot_url": None,
-        "log_url": "runtime/logs/device_01.log",
-    }
-    assert api_client.auto_stop_requests == [
-        {"remark": "device_01: task iteration finished", "force": True}
-    ]
-
-
 def test_worker_waits_when_no_task() -> None:
     api_client = FakeApiClient([ClaimTaskResult(has_task=False)])
     executor = RecordingExecutor()
@@ -193,7 +133,7 @@ def test_worker_waits_when_no_task() -> None:
     assert stopped == [True]
 
 
-def test_worker_run_once_returns_claimed_result() -> None:
+def test_worker_rejects_legacy_search_task_without_start_or_report() -> None:
     task = ClaimTaskResult(
         has_task=True,
         task_id=1,
@@ -207,20 +147,23 @@ def test_worker_run_once_returns_claimed_result() -> None:
         comment_content="comment",
     )
     api_client = FakeApiClient([task])
+    executor = RecordingExecutor()
     worker = TaskWorker(
         device=make_device(),
         api_client=api_client,  # type: ignore[arg-type]
         publish_account="account",
         poll_interval_seconds=0,
-        executor=RecordingExecutor(),
+        executor=executor,
         runtime_dir="runtime",
     )
 
     result = worker.run_once()
 
-    assert result.claimed_task is True
-    assert result.no_task_reason is None
-    assert result.should_stop_business is False
+    assert result.claimed_task is False
+    assert result.no_task_reason == "legacy_search_task_unsupported"
+    assert api_client.start_requests == []
+    assert api_client.report_requests == []
+    assert executor.tasks == []
 
 
 def test_worker_executes_doctor_list_task_without_old_start_or_report() -> None:
@@ -366,115 +309,6 @@ def test_worker_does_not_claim_when_device_offline() -> None:
     assert api_client.claim_requests == []
     assert executor.tasks == []
     assert api_client.auto_stop_requests == []
-
-
-def test_worker_reports_failed_when_executor_raises() -> None:
-    task = ClaimTaskResult(
-        has_task=True,
-        task_id=1,
-        task_item_id=2,
-        doctor_id=3,
-        doctor_name="张明山",
-        keyword_id=4,
-        keyword="脑膜瘤",
-        search_word="脑膜瘤",
-        comment_bank_item_id=5,
-        comment_content="测试评论",
-    )
-    api_client = FakeApiClient([task])
-    executor = RecordingExecutor(error=RuntimeError("评论按钮未找到"))
-    worker = TaskWorker(
-        device=make_device(),
-        api_client=api_client,  # type: ignore[arg-type]
-        publish_account="测试账号01",
-        poll_interval_seconds=0,
-        executor=executor,
-        runtime_dir="runtime",
-    )
-
-    worker.run(max_iterations=1)
-
-    assert api_client.report_requests[0]["status"] == "failed"
-    assert api_client.report_requests[0]["fail_reason"] == "评论按钮未找到"
-    assert api_client.report_requests[0]["log_url"] == "runtime/logs/device_01.log"
-    assert api_client.auto_stop_requests == [
-        {"remark": "device_01: task iteration finished", "force": True}
-    ]
-
-
-def test_worker_runs_device_cleanup_when_report_fails() -> None:
-    task = ClaimTaskResult(
-        has_task=True,
-        task_id=1,
-        task_item_id=2,
-        doctor_id=3,
-        doctor_name="张明山",
-        keyword_id=4,
-        keyword="脑膜瘤",
-        search_word="脑膜瘤",
-        comment_bank_item_id=5,
-        comment_content="测试评论",
-    )
-    api_client = FakeApiClient([task])
-    api_client.report_error = RuntimeError("backend report failed")
-    executor = RecordingExecutor()
-    device = make_device()
-    worker = TaskWorker(
-        device=device,
-        api_client=api_client,  # type: ignore[arg-type]
-        publish_account="测试账号01",
-        poll_interval_seconds=0,
-        executor=executor,
-        runtime_dir="runtime",
-    )
-
-    try:
-        worker.run(max_iterations=1)
-    except RuntimeError as exc:
-        assert str(exc) == "backend report failed"
-    else:
-        raise AssertionError("expected report error")
-
-    assert len(executor.cleanup_calls) == 1
-    assert executor.cleanup_calls[0][0] is device
-    assert str(executor.cleanup_calls[0][1]) == "backend report failed"
-    assert api_client.auto_stop_requests == [
-        {"remark": "device_01: task iteration finished", "force": True}
-    ]
-
-
-def test_worker_can_skip_report_for_temporary_test_run() -> None:
-    task = ClaimTaskResult(
-        has_task=True,
-        task_id=1,
-        task_item_id=2,
-        doctor_id=3,
-        doctor_name="张明山",
-        keyword_id=4,
-        keyword="脑膜瘤",
-        search_word="脑膜瘤",
-        comment_bank_item_id=5,
-        comment_content="测试评论",
-    )
-    api_client = FakeApiClient([task])
-    executor = RecordingExecutor(result=TaskExecutionResult.no_report())
-    worker = TaskWorker(
-        device=make_device(),
-        api_client=api_client,  # type: ignore[arg-type]
-        publish_account="测试账号01",
-        poll_interval_seconds=0,
-        executor=executor,
-        runtime_dir="runtime",
-    )
-
-    worker.run(max_iterations=1)
-
-    assert len(executor.tasks) == 1
-    assert len(api_client.start_requests) == 1
-    assert api_client.report_requests == []
-    assert api_client.auto_stop_requests == [
-        {"remark": "device_01: task iteration finished", "force": True}
-    ]
 
 
 def test_runner_runs_once_for_each_device() -> None:

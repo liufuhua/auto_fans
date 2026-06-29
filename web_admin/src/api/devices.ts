@@ -167,31 +167,3 @@ export const updateDeviceEnabledStatusApi = async (
     action === 'enable' ? API_ENDPOINTS.devices.enable(id) : API_ENDPOINTS.devices.disable(id),
   )
 }
-
-export const refreshDeviceIpApi = async (id: number): Promise<DeviceItem> => {
-  if (USE_MOCK_API) {
-    await wait(300)
-    const devices = readDevices()
-    const nextDevices = devices.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            publicIp: '114.255.249.149',
-            ipProvince: '北京',
-            ipCity: '北京市',
-            ipRegion: '中国北京市东城区',
-            ipCheckedAt: now(),
-            updatedAt: now(),
-          }
-        : item,
-    )
-    writeDevices(nextDevices)
-    const updated = nextDevices.find((item) => item.id === id)
-    if (!updated) {
-      throw new Error('设备不存在')
-    }
-    return updated
-  }
-
-  return request.post<DeviceItem, DeviceItem>(API_ENDPOINTS.devices.refreshIp(id))
-}

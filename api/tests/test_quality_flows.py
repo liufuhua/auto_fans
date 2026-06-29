@@ -1,6 +1,9 @@
+from datetime import date, datetime
+from io import BytesIO
+
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from datetime import date, datetime
+from openpyxl import Workbook
 from sqlalchemy import select, text
 
 from app.db.session import SessionLocal
@@ -25,6 +28,7 @@ from app.services.comment_recheck import (
     list_comment_recheck_items,
     list_comment_recheck_result_ids_by_date_range,
 )
+from app.services.comment_bank import import_comment_bank_excel
 from app.services.doctors import list_doctors, update_doctor_sort_order
 from app.services.daily_tasks import dispatch_daily_task, to_daily_task_read
 
@@ -39,6 +43,54 @@ def test_admin_users_api_pagination_and_password_reset() -> None:
 
 def test_comment_bank_excel_import_and_delete() -> None:
     check_comment_bank.main()
+
+
+def test_comment_bank_import_allows_empty_or_unknown_search_word() -> None:
+    doctor_name = "__pytest_comment_import_optional_keyword_doctor__"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["搜索词", "评论内容"])
+    sheet.append(["", "没有关键词也应该导入"])
+    sheet.append(["不存在的关键词", "未知关键词也应该导入"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    with SessionLocal() as db:
+        existing_doctors = db.scalars(select(Doctor).where(Doctor.name == doctor_name)).all()
+        for doctor in existing_doctors:
+            db.query(CommentBankItem).filter(CommentBankItem.doctor_id == doctor.id).delete(
+                synchronize_session=False
+            )
+            db.delete(doctor)
+        db.commit()
+
+        doctor = Doctor(name=doctor_name, remark="", status="active")
+        db.add(doctor)
+        db.commit()
+        db.refresh(doctor)
+
+        response = import_comment_bank_excel(db, doctor.id, buffer.getvalue())
+        comments = db.scalars(
+            select(CommentBankItem)
+            .where(CommentBankItem.doctor_id == doctor.id)
+            .order_by(CommentBankItem.id.asc())
+        ).all()
+
+        assert response.imported == 2
+        assert response.skipped == 0
+        assert [comment.content for comment in comments] == [
+            "没有关键词也应该导入",
+            "未知关键词也应该导入",
+        ]
+        assert [comment.keyword_id for comment in comments] == [None, None]
+        assert [comment.search_word for comment in comments] == [None, "不存在的关键词"]
+
+        db.query(CommentBankItem).filter(CommentBankItem.doctor_id == doctor.id).delete(
+            synchronize_session=False
+        )
+        db.delete(doctor)
+        db.commit()
 
 
 def test_daily_task_database_write_flow() -> None:

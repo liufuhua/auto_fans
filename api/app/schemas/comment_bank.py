@@ -10,8 +10,8 @@ class CommentBankItemRead(BaseModel):
     id: int
     doctor_id: int = Field(serialization_alias="doctorId")
     doctor_name: str = Field(serialization_alias="doctorName")
-    keyword_id: int = Field(serialization_alias="keywordId")
-    keyword: str
+    keyword_id: int | None = Field(default=None, serialization_alias="keywordId")
+    keyword: str = ""
     content: str
     status: CommentUsageStatus
     used_device_name: str | None = Field(default=None, serialization_alias="usedDeviceName")

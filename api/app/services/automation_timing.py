@@ -22,9 +22,6 @@ class DefaultTimingSetting:
 
 
 DEFAULT_TIMING_SETTINGS: tuple[DefaultTimingSetting, ...] = (
-    DefaultTimingSetting("before_input", "点击首页搜索入口后", 3, 15),
-    DefaultTimingSetting("after_input", "输入搜索词后", 2, 5),
-    DefaultTimingSetting("after_search", "点击搜索按钮后", 2, 3),
     DefaultTimingSetting("watch_video", "视频观看时长", 15, 300),
     DefaultTimingSetting("after_like", "点赞后", 3, 20),
     DefaultTimingSetting("after_favorite", "收藏后", 3, 20),
@@ -35,10 +32,18 @@ DEFAULT_TIMING_SETTINGS: tuple[DefaultTimingSetting, ...] = (
     DefaultTimingSetting("single_device_daily_task_limit", "单设备每天最大任务量", 20, 20),
     DefaultTimingSetting("runtime_start_time", "运行开始时间", 8 * 60, 8 * 60),
     DefaultTimingSetting("runtime_end_time", "运行结束时间", 23 * 60, 23 * 60),
-    DefaultTimingSetting("douyin_restart_interval", "退出和重启抖音间隔时间（分钟）", 30, 30),
+    DefaultTimingSetting("douyin_exit_interval", "退出抖音时间（分钟）", 20, 20),
+    DefaultTimingSetting("douyin_reopen_interval", "重启抖音时间（分钟）", 20, 20),
 )
 
-DEPRECATED_TIMING_KEYS = {"runtime_start_hour", "runtime_end_hour"}
+DEPRECATED_TIMING_KEYS = {
+    "runtime_start_hour",
+    "runtime_end_hour",
+    "before_input",
+    "after_input",
+    "after_search",
+    "douyin_restart_interval",
+}
 
 
 def list_automation_timing_settings(db: Session) -> list[AutomationTimingSettingItem]:

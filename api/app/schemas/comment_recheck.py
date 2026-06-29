@@ -22,8 +22,8 @@ class CommentRecheckItemRead(BaseModel):
     task_date: date = Field(serialization_alias="taskDate")
     doctor_id: int = Field(serialization_alias="doctorId")
     doctor_name: str = Field(serialization_alias="doctorName")
-    keyword_id: int = Field(serialization_alias="keywordId")
-    keyword: str
+    keyword_id: int | None = Field(default=None, serialization_alias="keywordId")
+    keyword: str = ""
     device_name: str = Field(serialization_alias="deviceName")
     publish_account: str = Field(serialization_alias="publishAccount")
     comment_content: str = Field(serialization_alias="commentContent")

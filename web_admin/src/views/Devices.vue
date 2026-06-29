@@ -5,7 +5,6 @@ import { CircleCheck, CircleClose, Edit, Plus, Refresh, Search } from '@element-
 import {
   createDeviceApi,
   getDevicesApi,
-  refreshDeviceIpApi,
   updateDeviceApi,
   updateDeviceEnabledStatusApi,
 } from '../api/devices'
@@ -24,7 +23,6 @@ const total = ref(0)
 const dialogVisible = ref(false)
 const editingDevice = ref<DeviceItem | null>(null)
 const formRef = ref<FormInstance>()
-const refreshingIpDeviceIds = ref<number[]>([])
 const regionOptions = ref<string[]>([])
 
 const deviceModelOptions: Array<{ label: string; value: DeviceModel }> = [
@@ -211,21 +209,6 @@ const toggleEnabledStatus = async (device: DeviceItem) => {
   loadDevices()
 }
 
-const isRefreshingIp = (deviceId: number) => refreshingIpDeviceIds.value.includes(deviceId)
-
-const refreshDeviceIp = async (device: DeviceItem) => {
-  refreshingIpDeviceIds.value = [...refreshingIpDeviceIds.value, device.id]
-  try {
-    const updated = await refreshDeviceIpApi(device.id)
-    devices.value = devices.value.map((item) => (item.id === updated.id ? updated : item))
-    ElMessage.success(
-      `获取成功：${updated.publicIp || '-'} ${updated.ipRegion || updated.ipProvince || ''}`,
-    )
-  } finally {
-    refreshingIpDeviceIds.value = refreshingIpDeviceIds.value.filter((id) => id !== device.id)
-  }
-}
-
 const handlePageChange = (page: number) => {
   query.page = page
   loadDevices()
@@ -323,19 +306,11 @@ onMounted(async () => {
         <el-table-column label="最后心跳" width="130">
           <template #default="{ row }">{{ formatDateTime(row.lastHeartbeatAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="260">
+        <el-table-column label="操作" width="180">
           <template #default="{ row }">
             <el-button :icon="Edit" link type="primary" @click="openEditDialog(row)"
               >编辑</el-button
             >
-            <el-button
-              :loading="isRefreshingIp(row.id)"
-              link
-              type="primary"
-              @click="refreshDeviceIp(row)"
-            >
-              获取IP地址
-            </el-button>
             <el-button
               :icon="row.enabledStatus === 'enabled' ? CircleClose : CircleCheck"
               link
@@ -446,14 +421,4 @@ onMounted(async () => {
   padding-top: 14px;
 }
 
-.ip-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ip-cell small {
-  color: #909399;
-  line-height: 1.4;
-}
 </style>

@@ -15,7 +15,7 @@ export type CommentRecheckItem = {
   taskDate: string
   doctorId: number
   doctorName: string
-  keywordId: number
+  keywordId?: number | null
   keyword: string
   deviceName: string
   publishAccount: string

@@ -150,7 +150,7 @@ const openImportEntry = () => {
 const downloadTemplate = () => {
   const rows = [
     ['搜索词', '评论内容'],
-    ['脑膜瘤', '明山主任真的太牛了，颅底肿瘤这种高难度手术，在您手里稳稳的，专业又靠谱！'],
+    ['', '明山主任真的太牛了，颅底肿瘤这种高难度手术，在您手里稳稳的，专业又靠谱！'],
     ['脑膜瘤', '刷到明山主任是福气，看脑膜瘤、听神经瘤就找您，技术顶尖，人还特别有耐心。'],
   ]
   import('xlsx').then((XLSX) => {
@@ -242,7 +242,7 @@ onMounted(async () => {
     <div class="page-toolbar">
       <div>
         <h1 class="page-title">评论词库</h1>
-        <p class="page-subtitle">按医生和关键词维护评论内容，支持 Excel 导入。</p>
+        <p class="page-subtitle">按医生维护评论内容，支持 Excel 导入，搜索词可为空。</p>
       </div>
       <div class="toolbar-actions">
         <el-button :icon="Download" @click="downloadTemplate">下载模板</el-button>
@@ -330,7 +330,6 @@ onMounted(async () => {
       >
         <el-table-column type="selection" width="48" />
         <el-table-column label="医生" min-width="110" prop="doctorName" />
-        <el-table-column label="关键词" min-width="140" prop="keyword" />
         <el-table-column label="评论内容" min-width="300" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="comment-content">{{ row.content }}</span>
@@ -382,7 +381,7 @@ onMounted(async () => {
         class="import-tip"
         :closable="false"
         show-icon
-        title="Excel 第一行必须包含：搜索词、评论内容。搜索词需要匹配该医生已维护的关键词。"
+        title="Excel 第一行必须包含：评论内容。搜索词可以为空，也不要求匹配医生关键词。"
         type="info"
       />
 
@@ -414,7 +413,7 @@ onMounted(async () => {
           >
             <el-button :icon="Upload">选择文件</el-button>
             <template #tip>
-              <div class="upload-tip">仅支持 `.xlsx` / `.xls`，一行一条评论。</div>
+              <div class="upload-tip">仅支持 `.xlsx` / `.xls`，一行一条评论，搜索词可为空。</div>
             </template>
           </el-upload>
           <div v-if="selectedFile" class="selected-file">已选择：{{ selectedFile.name }}</div>

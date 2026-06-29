@@ -187,61 +187,7 @@ scripts/open_douyin.sh R5CW11CKN0B device_03 8203
 scripts/open_douyin.sh FMR0223830012928 device_01 8201 --adb-only
 ```
 
-点击首页搜索入口：
-
-```bash
-scripts/tap_search.sh
-```
-
-如果当前只有一台在线设备，脚本会自动使用该设备。
-默认优先通过 Appium XPath 点击搜索按钮：
-
-```text
-//android.widget.Button[@resource-id="com.ss.android.ugc.aweme:id/2ei"]
-```
-
-如果 Appium XPath 点击失败，会自动回退到 ADB 坐标点击。
-
-指定设备和坐标点击首页搜索入口：
-
-```bash
-scripts/tap_search.sh FMR0223830012928 1170 196
-```
-
-当前新设备示例：
-
-```bash
-scripts/tap_search.sh adb-10AG3R2JNF001KK-WGRLsd._adb-tls-connect._tcp 1170 196
-scripts/tap_search.sh R5CW11CKN0B 990 196
-```
-
-只使用 ADB 坐标点击：
-
-```bash
-scripts/tap_search.sh R5CW11CKN0B 990 196 --adb-only
-```
-
-临时覆盖搜索按钮 XPath：
-
-```bash
-SEARCH_XPATH='//android.widget.Button[@resource-id="com.ss.android.ugc.aweme:id/2ei"]' scripts/tap_search.sh R5CW11CKN0B
-```
-
-快速调用主流程执行 task39 测试数据：
-
-```bash
-cd automation_client
-.venv/bin/python -m app.debug_executor_task39 \
-  --udid R5CW11CKN0B \
-  --device-name device_03 \
-  --system-port 8203 \
-  --debug \
-  --execute-video-actions
-```
-
-`debug_executor_task39` 只是本地测试入口，用固定 task39 数据快速调用
-`DouyinAppiumTaskExecutor` 主流程。正式业务仍从管理后台启动，由
-`TaskWorker` 领取任务后调用同一个主流程。
+旧的首页搜索入口点击脚本和 task39 搜索流调试脚本已经删除。当前客户端只保留首页流执行方式。
 
 当前视频动作定位：
 
@@ -680,7 +626,6 @@ tests/test_task_worker.py
 
 ```text
 open_douyin()
-search_keyword()
 enter_doctor_page()
 open_target_video()
 like_video()
@@ -706,8 +651,6 @@ tests/test_douyin_actions.py
 定位配置：
 
 ```text
-search_button
-search_input
 user_tab
 doctor_page_entry
 video_entry

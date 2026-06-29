@@ -63,7 +63,6 @@ export const API_ENDPOINTS = {
     update: (id: number) => `/devices/${id}`,
     enable: (id: number) => `/devices/${id}/enable`,
     disable: (id: number) => `/devices/${id}/disable`,
-    refreshIp: (id: number) => `/devices/${id}/refresh-ip`,
   },
   automationResults: {
     list: '/automation-results',

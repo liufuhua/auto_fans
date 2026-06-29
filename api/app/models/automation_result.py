@@ -19,8 +19,8 @@ class AutomationResult(TimestampMixin, Base):
         ForeignKey("daily_task_items.id"), nullable=True
     )
     doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True, nullable=False)
-    keyword_id: Mapped[int] = mapped_column(
-        ForeignKey("doctor_keywords.id"), index=True, nullable=False
+    keyword_id: Mapped[int | None] = mapped_column(
+        ForeignKey("doctor_keywords.id"), index=True, nullable=True
     )
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True, nullable=False)
     comment_bank_item_id: Mapped[int | None] = mapped_column(

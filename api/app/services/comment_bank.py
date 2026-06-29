@@ -14,14 +14,14 @@ from app.services.doctors import get_doctor_or_404
 
 
 def _to_comment_bank_item_read(
-    item: CommentBankItem, doctor_name: str, keyword: str, used_device_name: str | None
+    item: CommentBankItem, doctor_name: str, keyword: str | None, used_device_name: str | None
 ) -> CommentBankItemRead:
     return CommentBankItemRead(
         id=item.id,
         doctor_id=item.doctor_id,
         doctor_name=doctor_name,
         keyword_id=item.keyword_id,
-        keyword=keyword,
+        keyword=keyword or item.search_word or "",
         content=item.content,
         status=item.status,
         used_device_name=used_device_name,
@@ -31,22 +31,22 @@ def _to_comment_bank_item_read(
     )
 
 
-def _comment_bank_base_statement() -> Select[tuple[CommentBankItem, str, str, str | None]]:
+def _comment_bank_base_statement() -> Select[tuple[CommentBankItem, str, str | None, str | None]]:
     return (
         select(CommentBankItem, Doctor.name, DoctorKeyword.keyword, Device.name)
         .join(Doctor, Doctor.id == CommentBankItem.doctor_id)
-        .join(DoctorKeyword, DoctorKeyword.id == CommentBankItem.keyword_id)
+        .outerjoin(DoctorKeyword, DoctorKeyword.id == CommentBankItem.keyword_id)
         .outerjoin(Device, Device.id == CommentBankItem.used_device_id)
     )
 
 
 def _apply_comment_bank_filters(
-    statement: Select[tuple[CommentBankItem, str, str, str | None]],
+    statement: Select[tuple[CommentBankItem, str, str | None, str | None]],
     doctor_id: int | None,
     keyword_id: int | None,
     status: str | None,
     keyword: str | None,
-) -> Select[tuple[CommentBankItem, str, str, str | None]]:
+) -> Select[tuple[CommentBankItem, str, str | None, str | None]]:
     if doctor_id:
         statement = statement.where(CommentBankItem.doctor_id == doctor_id)
     if keyword_id:
@@ -60,6 +60,7 @@ def _apply_comment_bank_filters(
                 CommentBankItem.content.like(keyword_like),
                 Doctor.name.like(keyword_like),
                 DoctorKeyword.keyword.like(keyword_like),
+                CommentBankItem.search_word.like(keyword_like),
             )
         )
     return statement
@@ -111,7 +112,7 @@ def batch_delete_comment_bank_items(db: Session, item_ids: list[int]) -> int:
     return len(items)
 
 
-def _parse_comment_excel(file_bytes: bytes) -> list[tuple[str, str]]:
+def _parse_comment_excel(file_bytes: bytes) -> list[tuple[str | None, str]]:
     try:
         workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
     except Exception as exc:
@@ -127,17 +128,21 @@ def _parse_comment_excel(file_bytes: bytes) -> list[tuple[str, str]]:
     headers = [str(value).strip() if value is not None else "" for value in rows[0]]
     search_word_index = _find_header_index(headers, ["搜索词", "searchWord", "keyword"])
     content_index = _find_header_index(headers, ["评论内容", "content"])
-    if search_word_index is None or content_index is None:
+    if content_index is None:
         raise AppException(
-            "Excel 必须包含“搜索词”和“评论内容”两列", code="EXCEL_HEADER_INVALID", status_code=400
+            "Excel 必须包含“评论内容”列", code="EXCEL_HEADER_INVALID", status_code=400
         )
 
-    parsed_rows: list[tuple[str, str]] = []
+    parsed_rows: list[tuple[str | None, str]] = []
     for row in rows[1:]:
-        search_word = _cell_to_str(row[search_word_index] if search_word_index < len(row) else None)
+        search_word = (
+            _cell_to_str(row[search_word_index] if search_word_index < len(row) else None)
+            if search_word_index is not None
+            else ""
+        )
         content = _cell_to_str(row[content_index] if content_index < len(row) else None)
-        if search_word and content:
-            parsed_rows.append((search_word, content))
+        if content:
+            parsed_rows.append((search_word or None, content))
     return parsed_rows
 
 
@@ -165,15 +170,12 @@ def import_comment_bank_excel(
     imported = 0
     skipped = 0
     for search_word, content in rows:
-        matched_keyword = keyword_map.get(search_word)
-        if matched_keyword is None:
-            skipped += 1
-            continue
+        matched_keyword = keyword_map.get(search_word) if search_word else None
 
         db.add(
             CommentBankItem(
                 doctor_id=doctor_id,
-                keyword_id=matched_keyword.id,
+                keyword_id=matched_keyword.id if matched_keyword else None,
                 search_word=search_word,
                 content=content,
                 status="unused",

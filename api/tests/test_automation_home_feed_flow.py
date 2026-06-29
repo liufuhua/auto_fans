@@ -22,6 +22,14 @@ from app.services.automation import (
     report_task,
     start_task,
 )
+import app.services.automation as automation_service
+
+
+def test_automation_service_no_longer_exposes_legacy_claim_helpers() -> None:
+    assert not hasattr(automation_service, "_claim_task_pool_item")
+    assert not hasattr(automation_service, "_claim_no_task_reason")
+    assert not hasattr(automation_service, "_claim_task_dynamic_legacy")
+    assert not hasattr(automation_service, "_device_claimed_count_for_date")
 
 
 def _cleanup_home_feed_test_data(db, doctor_names: list[str], udids: list[str]) -> None:
@@ -229,5 +237,94 @@ def test_home_feed_start_and_report_store_result_under_task_1() -> None:
             assert comment.status == "used"
             assert comment.used_task_id == HOME_FEED_TASK_ID
             assert device.runtime_status == "idle"
+        finally:
+            _cleanup_home_feed_test_data(db, [doctor_name], [udid])
+
+
+def test_home_feed_start_and_report_support_comment_without_keyword() -> None:
+    udid = "__pytest_home_feed_no_keyword_udid__"
+    doctor_name = "__pytest_home_feed_no_keyword_doctor__"
+    comment_content = "__pytest_home_feed_no_keyword_content__"
+
+    with SessionLocal() as db:
+        _cleanup_home_feed_test_data(db, [doctor_name], [udid])
+        if db.get(DailyTask, HOME_FEED_TASK_ID) is None:
+            db.add(
+                DailyTask(
+                    id=HOME_FEED_TASK_ID,
+                    task_date=date.today(),
+                    status="running",
+                    total_count=0,
+                    success_count=0,
+                    failed_count=0,
+                    stopped_count=0,
+                    created_by="pytest-home-feed",
+                )
+            )
+        device = Device(
+            name="pytest home feed no keyword device",
+            udid=udid,
+            system_port=4964,
+            enabled_status="enabled",
+            runtime_status="idle",
+        )
+        doctor = Doctor(name=doctor_name, real_name="no-keyword", status="active")
+        db.add_all([device, doctor])
+        db.flush()
+        comment = CommentBankItem(
+            doctor_id=doctor.id,
+            keyword_id=None,
+            search_word=None,
+            content=comment_content,
+            status="unused",
+        )
+        db.add(comment)
+        db.commit()
+
+        try:
+            claimed = claim_matched_doctor_comment(
+                db,
+                ClaimMatchedDoctorCommentPayload(
+                    udid=udid,
+                    doctorId=doctor.id,
+                    publishAccount="pytest-home-feed",
+                ),
+            )
+            assert claimed.keyword_id is None
+            assert claimed.keyword == ""
+            assert claimed.search_word is None
+
+            start_response = start_task(
+                db,
+                HOME_FEED_TASK_ID,
+                StartTaskPayload(
+                    udid=udid,
+                    commentBankItemId=claimed.comment_bank_item_id,
+                    publishAccount="pytest-home-feed",
+                ),
+            )
+            report_response = report_task(
+                db,
+                HOME_FEED_TASK_ID,
+                ReportTaskPayload(
+                    udid=udid,
+                    resultId=start_response.result_id,
+                    commentBankItemId=claimed.comment_bank_item_id,
+                    publishAccount="pytest-home-feed",
+                    status="success",
+                    videoLink="https://v.douyin.com/pytest-home-feed-no-keyword/",
+                    resultSummary="home feed no keyword report ok",
+                ),
+            )
+
+            result = db.get(AutomationResult, report_response.result_id)
+            assert result is not None
+            assert result.task_id == HOME_FEED_TASK_ID
+            assert result.task_item_id is None
+            assert result.doctor_id == doctor.id
+            assert result.keyword_id is None
+            assert result.comment_bank_item_id == comment.id
+            assert result.comment_content == comment_content
+            assert result.status == "success"
         finally:
             _cleanup_home_feed_test_data(db, [doctor_name], [udid])

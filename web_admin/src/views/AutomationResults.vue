@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataAnalysis, Download, Refresh, Search } from '@element-plus/icons-vue'
+import { DataAnalysis, Download, Refresh, Search, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import {
   exportAutomationResultsToDesktopApi,
   getAutomationResultsApi,
 } from '../api/automationResults'
+import {
+  getAutomationRuntimeApi,
+  getAutomationServiceStatusApi,
+  startAutomationRuntimeApi,
+  stopAutomationRuntimeApi,
+} from '../api/automationRuntime'
 import {
   confirmCommentRecheckLoginApi,
   createCommentRecheckLoginSessionApi,
@@ -26,6 +32,11 @@ import type {
 import type { DailyTask } from '../types/dailyTask'
 import type { DeviceItem } from '../types/device'
 import type { DoctorItem, DoctorKeywordItem } from '../types/doctor'
+import type {
+  AutomationRuntimeState,
+  AutomationServiceInfo,
+  AutomationServiceStatus,
+} from '../types/automationRuntime'
 
 const loading = ref(false)
 const results = ref<AutomationResultItem[]>([])
@@ -41,6 +52,9 @@ const todayRecheckLoading = ref(false)
 const rangeRecheckLoading = ref(false)
 const exportLoading = ref(false)
 const selectedRows = ref<AutomationResultItem[]>([])
+const runtimeLoading = ref(false)
+const runtimeState = ref<AutomationRuntimeState | null>(null)
+const serviceStatus = ref<AutomationServiceStatus | null>(null)
 const loginDialogVisible = ref(false)
 const loginSessionLoading = ref(false)
 const loginConfirming = ref(false)
@@ -112,6 +126,39 @@ const selectedRecheckableRows = computed(() =>
 const filteredKeywords = computed(() =>
   keywords.value.filter((keyword) => !query.doctorId || keyword.doctorId === query.doctorId),
 )
+const businessRunning = computed(() => runtimeState.value?.businessStatus === 'running')
+const serviceLabels: Record<string, string> = {
+  api: 'API',
+  web: 'Web',
+  appium: 'Appium',
+  client: '业务客户端',
+}
+
+const serviceRows = computed(() =>
+  ['api', 'web', 'appium', 'client'].map((name) => ({
+    name,
+    label: serviceLabels[name],
+    info: serviceStatus.value?.services[name],
+  })),
+)
+
+const serviceTagType = (info?: AutomationServiceInfo) => (info?.status === 'running' ? 'success' : 'danger')
+const serviceText = (info?: AutomationServiceInfo) => (info?.status === 'running' ? '正常' : '停止')
+const serviceDetail = (info?: AutomationServiceInfo) => {
+  if (!info) {
+    return '-'
+  }
+  if (info.detail) {
+    return info.detail
+  }
+  if (info.port) {
+    return `${info.host || '127.0.0.1'}:${info.port}`
+  }
+  if (info.pid) {
+    return `pid=${info.pid}`
+  }
+  return '-'
+}
 
 const formatDateTime = (value?: string) => {
   if (!value) {
@@ -151,6 +198,37 @@ const loadResults = async () => {
     total.value = response.total
   } finally {
     loading.value = false
+  }
+}
+
+const loadRuntime = async () => {
+  ;[runtimeState.value, serviceStatus.value] = await Promise.all([
+    getAutomationRuntimeApi(),
+    getAutomationServiceStatusApi(),
+  ])
+}
+
+const toggleRuntime = async () => {
+  runtimeLoading.value = true
+  try {
+    if (businessRunning.value) {
+      await ElMessageBox.confirm(
+        '确认停止业务？设备将停止领取新任务。',
+        '停止业务',
+        {
+          confirmButtonText: '停止业务',
+          cancelButtonText: '取消',
+          type: 'warning',
+        },
+      )
+      runtimeState.value = await stopAutomationRuntimeApi()
+      ElMessage.success('业务已停止')
+    } else {
+      runtimeState.value = await startAutomationRuntimeApi()
+      ElMessage.success('业务已启动')
+    }
+  } finally {
+    runtimeLoading.value = false
   }
 }
 
@@ -438,7 +516,7 @@ watch(
 onMounted(async () => {
   const today = getTodayDateText()
   exportDateRange.value = [today, today]
-  await loadOptions()
+  await Promise.all([loadOptions(), loadRuntime()])
   await loadResults()
 })
 </script>
@@ -447,9 +525,40 @@ onMounted(async () => {
   <section class="page-shell">
     <div class="page-toolbar">
       <div>
-        <h1 class="page-title">执行结果</h1>
-        <p class="page-subtitle">查看评论发布账号、视频链接、执行状态和完整执行结果。</p>
+        <h1 class="page-title">任务执行</h1>
+        <p class="page-subtitle">启动或停止业务，并查看评论发布账号、视频链接和执行状态。</p>
       </div>
+      <div class="toolbar-actions">
+        <el-tag :type="businessRunning ? 'success' : 'info'" effect="plain">
+          {{ businessRunning ? '业务运行中' : '业务未启动' }}
+        </el-tag>
+        <el-button
+          :icon="businessRunning ? VideoPause : VideoPlay"
+          :loading="runtimeLoading"
+          :type="businessRunning ? 'warning' : 'success'"
+          @click="toggleRuntime"
+        >
+          {{ businessRunning ? '停止业务' : '启动业务' }}
+        </el-button>
+        <el-button :icon="Refresh" @click="loadRuntime">刷新状态</el-button>
+      </div>
+    </div>
+
+    <div class="service-status-panel">
+      <div
+        v-for="service in serviceRows"
+        :key="service.name"
+        class="service-status-item"
+      >
+        <span class="service-status-name">{{ service.label }}</span>
+        <el-tag :type="serviceTagType(service.info)" effect="plain">
+          {{ serviceText(service.info) }}
+        </el-tag>
+        <span class="service-status-detail">{{ serviceDetail(service.info) }}</span>
+      </div>
+    </div>
+
+    <div class="result-actions">
       <el-button
         :icon="DataAnalysis"
         :loading="recheckLoading"
@@ -599,6 +708,22 @@ onMounted(async () => {
         <el-table-column label="评论内容" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">{{ row.commentContent }}</template>
         </el-table-column>
+        <el-table-column label="视频链接" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <el-link
+              v-if="row.videoLink"
+              class="video-link"
+              :href="row.videoLink"
+              target="_blank"
+              :title="row.videoLink"
+              type="primary"
+              underline="never"
+            >
+              {{ row.videoLink }}
+            </el-link>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.status === 'success' ? 'success' : 'danger'" effect="plain">
@@ -703,6 +828,54 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 
+.toolbar-actions,
+.result-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.result-actions {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.service-status-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.service-status-item {
+  display: grid;
+  min-height: 72px;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  padding: 12px;
+}
+
+.service-status-name {
+  color: #111827;
+  font-weight: 600;
+}
+
+.service-status-detail {
+  grid-column: 1 / -1;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .service-status-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .summary-strip {
   display: flex;
   justify-content: space-between;
@@ -731,6 +904,14 @@ onMounted(async () => {
   display: grid;
   gap: 2px;
   line-height: 1.35;
+}
+
+.video-link {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .result-dialog-meta {

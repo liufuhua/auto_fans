@@ -179,16 +179,6 @@ class DouyinActions:
     def open_douyin(self) -> None:
         self._run_step("open_douyin", lambda: self.driver.activate_app(self.package_name))
 
-    def search_keyword(self, keyword: str) -> None:
-        def action() -> None:
-            self._click("search_button")
-            search_input = self._wait_visible("search_input")
-            search_input.clear()
-            search_input.send_keys(keyword)
-            self._press_enter()
-
-        self._run_step("search_keyword", action)
-
     def enter_doctor_page(self, doctor_name: str | None = None) -> None:
         def action() -> None:
             self._click("user_tab")

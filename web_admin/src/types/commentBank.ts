@@ -4,7 +4,7 @@ export type CommentBankItem = {
   id: number
   doctorId: number
   doctorName: string
-  keywordId: number
+  keywordId?: number | null
   keyword: string
   content: string
   status: CommentUsageStatus

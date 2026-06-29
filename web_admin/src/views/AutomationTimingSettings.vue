@@ -13,17 +13,29 @@ const loading = ref(false)
 const saving = ref(false)
 const resetLoading = ref(false)
 const settings = ref<AutomationTimingSettingItem[]>([])
+const hiddenSettingKeys = new Set([
+  'single_device_daily_task_limit',
+  'before_input',
+  'after_input',
+  'after_search',
+  'douyin_restart_interval',
+])
 const singleValueSettingKeys = new Set([
   'single_device_daily_task_limit',
   'runtime_start_time',
   'runtime_end_time',
   'douyin_restart_interval',
+  'douyin_exit_interval',
+  'douyin_reopen_interval',
 ])
 const timeSettingKeys = new Set(['runtime_start_time', 'runtime_end_time'])
 
 const isSingleValueSetting = (key: string) => singleValueSettingKeys.has(key)
 const isTimeSetting = (key: string) => timeSettingKeys.has(key)
-const isRestartIntervalSetting = (key: string) => key === 'douyin_restart_interval'
+const isMinuteValueSetting = (key: string) =>
+  key === 'douyin_restart_interval' ||
+  key === 'douyin_exit_interval' ||
+  key === 'douyin_reopen_interval'
 
 const singleValueMin = (_key: string) => 0
 const singleValueMax = (_key: string) => undefined
@@ -33,7 +45,7 @@ const valueColumnLabel = (key: string) => {
   if (isTimeSetting(key)) {
     return ''
   }
-  if (isRestartIntervalSetting(key)) {
+  if (isMinuteValueSetting(key)) {
     return '分钟'
   }
   if (key === 'single_device_daily_task_limit') {
@@ -62,6 +74,14 @@ const timeTextToMinute = (value: string) => {
   return hour * 60 + minute
 }
 
+const normalizeSettings = (items: AutomationTimingSettingItem[]) =>
+  items
+    .filter((item) => !hiddenSettingKeys.has(item.key))
+    .map((item) => ({
+      ...item,
+      timeValue: isTimeSetting(item.key) ? minuteToTimeText(item.maxSeconds) : undefined,
+    }))
+
 const rowHint = (row: AutomationTimingSettingItem) => {
   if (row.key === 'single_device_daily_task_limit') {
     return '达到该值后，当天该设备不再领取新任务；0 表示不限制'
@@ -72,8 +92,14 @@ const rowHint = (row: AutomationTimingSettingItem) => {
   if (row.key === 'runtime_end_time') {
     return '每天到该时间点停止领取新任务；早于开始时间表示跨天'
   }
+  if (row.key === 'douyin_exit_interval') {
+    return '打开抖音后，任务执行该分钟数'
+  }
+  if (row.key === 'douyin_reopen_interval') {
+    return '下次重新打开抖音前，等待该分钟数'
+  }
   if (row.key === 'douyin_restart_interval') {
-    return '强制退出抖音后，等待该分钟数再继续重启或重连'
+    return '旧配置，已隐藏'
   }
   return row.minSeconds === row.maxSeconds ? '固定等待' : '在最小和最大时间之间随机等待'
 }
@@ -81,10 +107,7 @@ const rowHint = (row: AutomationTimingSettingItem) => {
 const loadData = async () => {
   loading.value = true
   try {
-    settings.value = (await getAutomationTimingSettingsApi()).map((item) => ({
-      ...item,
-      timeValue: isTimeSetting(item.key) ? minuteToTimeText(item.maxSeconds) : undefined,
-    }))
+    settings.value = normalizeSettings(await getAutomationTimingSettingsApi())
   } finally {
     loading.value = false
   }
@@ -128,15 +151,17 @@ const saveSettings = async () => {
   }
   saving.value = true
   try {
-    settings.value = await updateAutomationTimingSettingsApi({
-      items: settings.value.map((item) => ({
-        key: item.key,
-        minSeconds: isSingleValueSetting(item.key)
-          ? Number(item.maxSeconds)
-          : Number(item.minSeconds),
-        maxSeconds: Number(item.maxSeconds),
-      })),
-    })
+    settings.value = normalizeSettings(
+      await updateAutomationTimingSettingsApi({
+        items: settings.value.map((item) => ({
+          key: item.key,
+          minSeconds: isSingleValueSetting(item.key)
+            ? Number(item.maxSeconds)
+            : Number(item.minSeconds),
+          maxSeconds: Number(item.maxSeconds),
+        })),
+      }),
+    )
     ElMessage.success('配置已保存')
   } finally {
     saving.value = false
@@ -151,7 +176,7 @@ const resetDefaults = async () => {
   })
   resetLoading.value = true
   try {
-    settings.value = await resetAutomationTimingSettingsApi()
+    settings.value = normalizeSettings(await resetAutomationTimingSettingsApi())
     ElMessage.success('已恢复默认配置')
   } finally {
     resetLoading.value = false

@@ -39,7 +39,7 @@ def build_excel() -> bytes:
     sheet = workbook.active
     sheet.append(["搜索词", "评论内容"])
     sheet.append([TEST_KEYWORD, "这是一条应该导入的评论"])
-    sheet.append([UNMATCHED_KEYWORD, "这是一条应该跳过的评论"])
+    sheet.append([UNMATCHED_KEYWORD, "这是一条未知关键词但应该导入的评论"])
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -81,7 +81,7 @@ def main() -> None:
     )
     import_response.raise_for_status()
     import_result = import_response.json()["data"]
-    assert import_result == {"imported": 1, "skipped": 1}
+    assert import_result == {"imported": 2, "skipped": 0}
     print("import excel ok")
 
     list_response = client.get(
@@ -97,6 +97,16 @@ def main() -> None:
     assert item["keywordId"] == keyword_id
     assert item["keyword"] == TEST_KEYWORD
     assert item["status"] == "unused"
+    all_list_response = client.get(
+        "/api/comment-bank",
+        params={"doctorId": doctor_id, "page": 1, "pageSize": 10},
+        headers=headers,
+    )
+    all_list_response.raise_for_status()
+    all_items = all_list_response.json()["data"]["items"]
+    unmatched_item = next(item for item in all_items if item["keyword"] == UNMATCHED_KEYWORD)
+    assert unmatched_item["keywordId"] is None
+    assert unmatched_item["status"] == "unused"
     print("list ok")
 
     delete_response = client.delete(f"/api/comment-bank/{item['id']}", headers=headers)

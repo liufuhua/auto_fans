@@ -10,6 +10,8 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 export LANG="${LANG:-C.UTF-8}"
 export LC_ALL="${LC_ALL:-C.UTF-8}"
+export NO_COLOR="${NO_COLOR:-1}"
+export FORCE_COLOR="${FORCE_COLOR:-0}"
 
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8000}"
@@ -91,6 +93,9 @@ start_process() {
   log "starting $name"
   (
     cd "$workdir"
+    if [[ ! -f "$log_path" ]]; then
+      printf '\xef\xbb\xbf' >"$log_path"
+    fi
     exec >>"$log_path" 2>&1
     exec "$@"
   ) &

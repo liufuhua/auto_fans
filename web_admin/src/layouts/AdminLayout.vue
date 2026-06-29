@@ -7,10 +7,8 @@ import {
   DataAnalysis,
   DocumentChecked,
   Files,
-  House,
   Connection,
   Monitor,
-  Location,
   Search,
   Setting,
   Timer,
@@ -32,24 +30,23 @@ type OpenTab = {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const defaultHomePath = '/automation-results'
 
 const menuItems: MenuItem[] = [
-  { path: '/dashboard', title: '控制台', icon: House },
   { path: '/admin-users', title: '后台用户', icon: User },
   { path: '/doctors', title: '医生管理', icon: Search },
-  { path: '/doctor-provinces', title: '医生省份', icon: Location },
   { path: '/comment-bank', title: '评论词库', icon: ChatDotRound },
   { path: '/daily-tasks', title: '每日任务', icon: Files },
   { path: '/devices', title: '设备管理', icon: Monitor },
-  { path: '/automation-results', title: '执行结果', icon: DocumentChecked },
+  { path: '/automation-results', title: '任务执行', icon: DocumentChecked },
   { path: '/service-status', title: '服务状态', icon: Connection },
   { path: '/automation-timing-settings', title: '配置管理', icon: Timer },
   { path: '/comment-recheck', title: '评论复检', icon: DataAnalysis },
 ]
 
 const activePath = computed(() => route.path)
-const openTabs = ref<OpenTab[]>([{ path: '/dashboard', title: menuItems[0].title }])
-const pageTitle = computed(() => String(route.meta.title || '控制台'))
+const openTabs = ref<OpenTab[]>([{ path: defaultHomePath, title: '任务执行' }])
+const pageTitle = computed(() => String(route.meta.title || '任务执行'))
 
 const resolveTabTitle = (path: string) =>
   String(route.path === path && route.meta.title ? route.meta.title : '') ||
@@ -81,7 +78,7 @@ const handleTabChange = (name: string | number) => {
 
 const handleTabRemove = (name: string | number) => {
   const path = String(name)
-  if (path === '/dashboard') {
+  if (path === defaultHomePath) {
     return
   }
 
@@ -94,7 +91,7 @@ const handleTabRemove = (name: string | number) => {
   openTabs.value = openTabs.value.filter((tab) => tab.path !== path)
 
   if (path === route.path) {
-    router.push(nextTab?.path || '/dashboard')
+    router.push(nextTab?.path || defaultHomePath)
   }
 }
 
@@ -110,7 +107,7 @@ const logout = async () => {
       <div class="brand">
         <div class="brand-mark">抖</div>
         <div>
-          <div class="brand-title">抖音测试后台</div>
+          <div class="brand-title">抖音铁粉工具</div>
           <div class="brand-subtitle">Automation Admin</div>
         </div>
       </div>
@@ -159,7 +156,7 @@ const logout = async () => {
           <el-tab-pane
             v-for="tab in openTabs"
             :key="tab.path"
-            :closable="tab.path !== '/dashboard'"
+            :closable="tab.path !== defaultHomePath"
             :label="tab.title"
             :name="tab.path"
           />

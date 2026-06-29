@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -36,20 +35,13 @@ from app.douyin_page_state import (
     safe_click,
 )
 from app.douyin_search_support import (
-    DEFAULT_AUTHOR_XPATH,
     DEFAULT_COMMENT_BUTTON_XPATH,
     DEFAULT_COMMENT_INPUT_XPATH,
     DEFAULT_FAVORITE_XPATH,
-    DEFAULT_INPUT_XPATH,
     DEFAULT_LIKE_XPATH,
     DEFAULT_LINK_COPIED_CLOSE_XPATH,
-    DEFAULT_SEARCH_BUTTON_XPATH,
     DEFAULT_SEND_COMMENT_XPATH,
-    DEFAULT_SUBMIT_XPATH,
-    DEFAULT_VIDEO_TAB_XPATH,
-    build_result_summary,
     build_search_locators,
-    collect_matched_author_elements,
     log_step,
     quit_with_timeout,
     random_seconds,
@@ -82,16 +74,6 @@ LINK_COPIED_CLOSE_XPATH = (
 )
 
 
-class SearchResultNotFoundError(RuntimeError):
-    """Raised when the target author cannot be found in search results."""
-
-    def __init__(self, message: str, *, active_driver=None) -> None:
-        super().__init__(message)
-        self.active_driver = active_driver
-
-
-SEARCH_TAB_WORDS = ("综合", "视频", "用户", "直播", "商品", "地点", "图文", "经验", "问答")
-BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 HOME_FEED_AUTHOR_TITLE_ID = "com.ss.android.ugc.aweme:id/title"
 HOME_FEED_AUTHOR_AVATAR_ID = "com.ss.android.ugc.aweme:id/user_avatar"
 HOME_FEED_AUTHOR_NOISE_WORDS = {
@@ -122,12 +104,6 @@ class DouyinAppiumExecutorConfig:
     after_open_seconds: float = 2
     return_home_step_wait_seconds: float = 1.5
     return_home_max_back_presses: int = 4
-    before_input_min_seconds: float = 3
-    before_input_max_seconds: float = 15
-    after_input_min_seconds: float = 2
-    after_input_max_seconds: float = 5
-    after_search_min_seconds: float = 2
-    after_search_max_seconds: float = 3
     after_swipe_min_seconds: float = 1
     after_swipe_max_seconds: float = 3
     watch_min_seconds: float = 15
@@ -144,7 +120,8 @@ class DouyinAppiumExecutorConfig:
     after_comment_input_max_seconds: float = 5
     before_send_min_seconds: float = 0
     before_send_max_seconds: float = 0
-    douyin_restart_interval_minutes: float = 30
+    douyin_exit_interval_minutes: float = 20
+    douyin_reopen_interval_minutes: float = 20
     max_swipes: int = 2
     swipe_percent: float = 0.45
     execute_video_actions_enabled: bool = True
@@ -190,7 +167,7 @@ DEVICE_TAP_PROFILES: dict[str, DeviceTapProfile] = {
 
 
 class DouyinAppiumTaskExecutor:
-    """TaskWorker executor that runs the real Douyin Appium search/comment flow."""
+    """TaskWorker executor that runs the real Douyin Appium home-feed flow."""
 
     def __init__(
         self,
@@ -203,6 +180,7 @@ class DouyinAppiumTaskExecutor:
             retries=1,
         )
         self._latest_actions: DouyinActions | None = None
+        self._douyin_reopen_pending = False
 
     def execute(
         self,
@@ -220,156 +198,7 @@ class DouyinAppiumTaskExecutor:
                 api_client=api_client,
             )
 
-        keyword = task.search_word or task.keyword
-        if not keyword:
-            raise RuntimeError("领取到的任务缺少关键词")
-        if not task.doctor_name:
-            raise RuntimeError("领取到的任务缺少医生姓名")
-        if not task.comment_content:
-            raise RuntimeError("领取到的任务缺少评论内容")
-
-        active_config = self._config_with_backend_timing(api_client)
-        args = self._build_args(device, config=active_config)
-        search_text = self._build_retry_search_text(
-            keyword=keyword,
-            doctor_name=task.doctor_name,
-            doctor_real_name=task.doctor_real_name,
-        )
-        target_author = task.doctor_name
-        app_path = str(Path(args.app).resolve()) if args.app else None
-        appium_device = AppiumDeviceConfig(
-            udid=device.udid,
-            system_port=device.system_port,
-            device_name=device.name,
-            appium_server_url=device.appium_server_url,
-            app=app_path,
-            app_package=args.package_name,
-            app_activity=args.app_activity,
-        )
-
-        log_step(
-            "worker claimed task: "
-            f"device={device.name}, resultId={start_result.result_id}, "
-            f"doctor={task.doctor_name}, keyword={keyword}, searchText={search_text}, "
-            f"doctorRealName={task.doctor_real_name or ''}, "
-            f"deviceModel={device.device_model}, "
-            f"创建 Appium driver：server={device.appium_server_url or active_config.appium_server_url}"
-        )
-        log_step("创建 Appium driver")
-        managed_driver = self.driver_factory.create(appium_device)
-        active_driver = managed_driver.driver
-        self._configure_driver(active_driver)
-        log_step("Appium driver 创建成功")
-        waits: dict[str, float] = {}
-        video_link: str | None = None
-        try:
-            actions = DouyinActions(
-                driver=active_driver,
-                locators=build_search_locators(args),
-                udid=device.udid,
-                package_name=args.package_name,
-                wait_timeout_seconds=args.wait_timeout_seconds,
-                task_id=task.task_item_id or "worker_search_task",
-            )
-            active_driver = self._ensure_douyin_home_page(
-                driver=active_driver,
-                actions=actions,
-                args=args,
-            )
-
-            actions = DouyinActions(
-                driver=active_driver,
-                locators=build_search_locators(args),
-                udid=device.udid,
-                package_name=args.package_name,
-                wait_timeout_seconds=args.wait_timeout_seconds,
-                task_id=task.task_item_id or "worker_search_task",
-            )
-            try:
-                matched_author, active_driver = self._find_with_name_first_search_plan(
-                    actions=actions,
-                    args=args,
-                    doctor_name=target_author,
-                    keyword_search_text=keyword,
-                    combined_search_text=search_text,
-                    waits=waits,
-                )
-            except SearchResultNotFoundError as exc:
-                return TaskExecutionResult.failed(fail_reason=str(exc))
-            actions = self._build_actions(
-                driver=active_driver,
-                args=args,
-                task_id="worker_video_task_before_like",
-            )
-            if not self.config.execute_video_actions_enabled:
-                log_step("临时测试模式：视频已打开，停止在点赞之前，不执行结果回传")
-                return TaskExecutionResult.no_report()
-
-            like_success, active_driver = self._like_video_and_reconnect(
-                actions=actions,
-                args=args,
-                waits=waits,
-            )
-            actions = self._build_actions(
-                driver=active_driver,
-                args=args,
-                task_id="worker_video_task_before_favorite",
-            )
-            favorite_success, active_driver = self._favorite_video_and_reconnect(
-                actions=actions,
-                args=args,
-                waits=waits,
-            )
-            actions = self._build_actions(
-                driver=active_driver,
-                args=args,
-                task_id="worker_video_task_before_share",
-            )
-            share_link_success, video_link, active_driver = self._share_video_and_reconnect(
-                actions=actions,
-                args=args,
-            )
-            if share_link_success and video_link:
-                log_step(f"分享链接已缓存，等待任务完成后随结果上报：{video_link}")
-            elif share_link_success:
-                log_step("分享链接已点击复制，但读取剪贴板失败，继续执行评论流程")
-            else:
-                log_step("分享链接未复制成功，继续执行评论流程")
-            actions = self._build_actions(
-                driver=active_driver,
-                args=args,
-                task_id="worker_video_task_before_comment",
-            )
-            active_driver = self._comment_video_and_reconnect(
-                actions=actions,
-                args=args,
-                comment=task.comment_content,
-                waits=waits,
-                send_comment=self.config.send_comment_enabled,
-            )
-            if self.config.send_comment_enabled:
-                log_step("评论已发送，抖音已强制退出，任务执行成功")
-            else:
-                log_step("评论已输入但未发送，抖音已强制退出，任务执行成功")
-            result_summary = build_result_summary(
-                task=task,
-                keyword=keyword,
-                matched_author=matched_author,
-                like_success=like_success,
-                favorite_success=favorite_success,
-                comment_success=True,
-                backend_status="success",
-                result_id=start_result.result_id,
-                waits=waits,
-                video_link=video_link,
-            )
-            return TaskExecutionResult.success(
-                video_link=video_link,
-                result_summary=result_summary,
-            )
-        finally:
-            quit_with_timeout(active_driver, args.quit_timeout_seconds)
-            self._clear_appium_session(args)
+        raise RuntimeError("旧搜索任务格式已停用，客户端只支持首页流医生列表任务")
 
     def _execute_home_feed_task(
         self,
@@ -701,6 +530,7 @@ class DouyinAppiumTaskExecutor:
         args: argparse.Namespace,
     ):
         log_step("确保抖音已打开")
+        self._wait_before_reopen_douyin_if_needed(args)
         actions.open_douyin()
         if args.after_open_seconds > 0:
             time.sleep(args.after_open_seconds)
@@ -816,17 +646,6 @@ class DouyinAppiumTaskExecutor:
         managed_driver = self._create_driver_from_args(args)
         return managed_driver.driver
 
-    @staticmethod
-    def _build_retry_search_text(
-        *,
-        keyword: str,
-        doctor_name: str,
-        doctor_real_name: str | None,
-    ) -> str:
-        real_name = (doctor_real_name or "").strip()
-        search_name = real_name or doctor_name
-        return f"{keyword} {search_name}".strip()
-
     def _create_driver_from_args(self, args: argparse.Namespace):
         app_path = str(Path(args.app).resolve()) if args.app else None
         appium_device = AppiumDeviceConfig(
@@ -929,373 +748,26 @@ class DouyinAppiumTaskExecutor:
         if result.returncode != 0:
             raise RuntimeError(f"强制退出抖音失败：returnCode={result.returncode}")
         log_step("抖音已强制退出")
-        restart_interval_seconds = max(0, float(args.douyin_restart_interval_minutes) * 60)
-        if restart_interval_seconds > 0:
+        self._douyin_reopen_pending = True
+        exit_interval_seconds = max(0, float(args.douyin_exit_interval_minutes) * 60)
+        if exit_interval_seconds > 0:
             log_step(
-                "等待抖音重启间隔："
-                f"{args.douyin_restart_interval_minutes:g} 分钟"
+                "等待退出抖音时间："
+                f"{args.douyin_exit_interval_minutes:g} 分钟"
             )
-            time.sleep(restart_interval_seconds)
+            time.sleep(exit_interval_seconds)
 
-    def _click_home_search_entry_and_reconnect(
-        self,
-        *,
-        actions: DouyinActions,
-        args: argparse.Namespace,
-        waits: dict[str, float],
-    ):
-        log_step("点击首页搜索入口")
-        self._click_home_search_entry(actions.driver)
-        log_step("首页搜索入口已点击")
-
-        waits["before_input"] = random_seconds(
-            args.before_input_min_seconds,
-            args.before_input_max_seconds,
-            "before input",
-        )
-        time.sleep(waits["before_input"])
-
-        log_step("搜索入口点击后释放 driver，执行 clear_session，再重连等待输入框")
-        return self._reconnect_driver(args=args, driver=actions.driver)
-
-    def _input_search_text_submit_and_reconnect(
-        self,
-        *,
-        actions: DouyinActions,
-        args: argparse.Namespace,
-        search_text: str,
-        waits: dict[str, float],
-    ):
-        search_input = self._wait_search_input(actions=actions, args=args)
-        log_step(f"搜索输入框已出现：rect={search_input.rect}")
-        self._input_search_text(actions.driver, search_input, search_text)
-
-        waits["after_input"] = random_seconds(
-            args.after_input_min_seconds,
-            args.after_input_max_seconds,
-            "after input",
-        )
-        time.sleep(waits["after_input"])
-        self._submit_search(actions.driver)
-        log_step(f"搜索已提交：{search_text}")
-
-        waits["after_search"] = random_seconds(
-            args.after_search_min_seconds,
-            args.after_search_max_seconds,
-            "after search",
-        )
-        time.sleep(waits["after_search"])
-
-        log_step("搜索提交后释放 driver，执行 clear_session，再重连读取搜索结果")
-        return self._reconnect_driver(args=args, driver=actions.driver)
-
-    def _wait_search_input(self, *, actions: DouyinActions, args: argparse.Namespace):
-        try:
-            return actions._wait_visible("search_input")
-        except Exception as exc:
-            if self._device_model(args) != "huawei_nova_se6":
-                raise
-            log_step(
-                "华为搜索输入框主定位失败，开始使用机型兜底："
-                f"{type(exc).__name__}: {exc}"
-            )
-            return self._wait_huawei_search_input(actions=actions, args=args)
-
-    def _wait_huawei_search_input(self, *, actions: DouyinActions, args: argparse.Namespace):
-        driver = actions.driver
-        self._log_search_page_candidates(driver)
-        for label, tap_ratio in (
-            ("顶部搜索框中部", (0.50, 0.075)),
-            ("顶部搜索入口右侧", (0.925, 0.082)),
-        ):
-            element = self._find_editable_search_input(driver)
-            if element is not None:
-                return element
-            self._tap_by_ratio(driver, tap_ratio[0], tap_ratio[1], f"华为兜底点击{label}")
-            time.sleep(1.2)
-            self._log_search_page_candidates(driver)
-
-        element = self._find_editable_search_input(driver)
-        if element is not None:
-            return element
-        return actions._wait_visible("search_input")
-
-    def _find_editable_search_input(self, driver):
-        selectors = [
-            (AppiumBy.ID, "com.ss.android.ugc.aweme:id/et_search_kw"),
-            (AppiumBy.XPATH, '//android.widget.EditText[@clickable="true" or @enabled="true"]'),
-            (
-                AppiumBy.ANDROID_UIAUTOMATOR,
-                'new UiSelector().className("android.widget.EditText").enabled(true)',
-            ),
-            (
-                AppiumBy.XPATH,
-                '//*[contains(@text,"搜索") or contains(@content-desc,"搜索")]',
-            ),
-        ]
-        for by, value in selectors:
-            try:
-                elements = driver.find_elements(by, value)
-            except Exception as exc:  # noqa: BLE001 - try next selector.
-                log_step(f"华为搜索输入框兜底 selector 失败：{by}={value}；{type(exc).__name__}: {exc}")
-                continue
-            for element in elements:
-                try:
-                    if element.is_displayed():
-                        log_step(
-                            "华为搜索输入框兜底命中："
-                            f"by={by} value={value} rect={element.rect}"
-                        )
-                        return element
-                except Exception:
-                    continue
-        return None
-
-    def _log_search_page_candidates(self, driver) -> None:
-        try:
-            source = driver.page_source
-        except Exception as exc:  # noqa: BLE001 - best effort diagnostics.
-            log_step(f"华为搜索页 page_source 获取失败：{type(exc).__name__}: {exc}")
+    def _wait_before_reopen_douyin_if_needed(self, args: argparse.Namespace) -> None:
+        if not self._douyin_reopen_pending:
             return
-        try:
-            root = ET.fromstring(source)
-        except Exception as exc:  # noqa: BLE001 - source may be partial.
-            log_step(f"华为搜索页 page_source 解析失败：{type(exc).__name__}: {exc}")
-            return
-
-        rows: list[str] = []
-        for node in root.iter():
-            class_name = node.attrib.get("class", "")
-            text = node.attrib.get("text", "")
-            desc = node.attrib.get("content-desc", "")
-            resource_id = node.attrib.get("resource-id", "")
-            if (
-                class_name == "android.widget.EditText"
-                or "搜索" in text
-                or "搜索" in desc
-                or "search" in resource_id.lower()
-                or "et_search" in resource_id
-            ):
-                rows.append(
-                    "class={class_name} text={text!r} desc={desc!r} "
-                    "id={resource_id!r} bounds={bounds}".format(
-                        class_name=class_name,
-                        text=text,
-                        desc=desc,
-                        resource_id=resource_id,
-                        bounds=node.attrib.get("bounds", ""),
-                    )
-                )
-            if len(rows) >= 12:
-                break
-        if rows:
-            log_step("华为搜索页候选节点：\n" + "\n".join(rows))
-        else:
-            log_step("华为搜索页未发现搜索相关节点或 EditText")
-
-    def _tap_by_ratio(self, driver, x_ratio: float, y_ratio: float, label: str) -> None:
-        size = driver.get_window_size()
-        x = int(size["width"] * x_ratio)
-        y = int(size["height"] * y_ratio)
-        driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-        log_step(f"{label}：ratio=({x_ratio:.3f},{y_ratio:.3f}) size={size} point=({x},{y})")
-
-    def _search_and_open_matching_video(
-        self,
-        *,
-        actions: DouyinActions,
-        args: argparse.Namespace,
-        search_text: str,
-        target_author: str,
-        waits: dict[str, float],
-        force_stop_on_not_found: bool = True,
-    ):
-        active_driver = self._click_home_search_entry_and_reconnect(
-            actions=actions,
-            args=args,
-            waits=waits,
-        )
-        actions = self._build_actions(
-            driver=active_driver,
-            args=args,
-            task_id="worker_search_task_after_search_click",
-        )
-        active_driver = self._input_search_text_submit_and_reconnect(
-            actions=actions,
-            args=args,
-            search_text=search_text,
-            waits=waits,
-        )
-        actions = self._build_actions(
-            driver=active_driver,
-            args=args,
-            task_id="worker_search_task_after_submit",
-        )
-        return self._find_and_open_matching_video(
-            actions=actions,
-            args=args,
-            target_author=target_author,
-            force_stop_on_not_found=force_stop_on_not_found,
-        )
-
-    def _find_with_name_first_search_plan(
-        self,
-        *,
-        actions: DouyinActions,
-        args: argparse.Namespace,
-        doctor_name: str,
-        keyword_search_text: str,
-        combined_search_text: str,
-        waits: dict[str, float],
-    ):
-        log_step(f"关键词优先搜索：先使用关键词搜索：{keyword_search_text}，匹配医生昵称：{doctor_name}")
-        name_only_error: SearchResultNotFoundError | None = None
-        try:
-            return self._search_and_open_matching_video(
-                actions=actions,
-                args=args,
-                search_text=keyword_search_text,
-                target_author=doctor_name,
-                waits=waits,
-                force_stop_on_not_found=False,
-            )
-        except SearchResultNotFoundError as name_only_error:
-            captured_error = name_only_error
+        self._douyin_reopen_pending = False
+        reopen_interval_seconds = max(0, float(args.douyin_reopen_interval_minutes) * 60)
+        if reopen_interval_seconds > 0:
             log_step(
-                "关键词搜索未找到符合要求的视频，准备回到首页后使用关键词+姓名重试："
-                f"{combined_search_text}；nameOnlyError={name_only_error}"
+                "等待重启抖音时间："
+                f"{args.douyin_reopen_interval_minutes:g} 分钟"
             )
-
-        latest_driver = getattr(captured_error, "active_driver", None) or actions.driver
-        latest_actions = self._build_actions(
-            driver=latest_driver,
-            args=args,
-            task_id="worker_search_task_before_retry_home",
-        )
-        active_driver = self._ensure_douyin_home_page(
-            driver=latest_driver,
-            actions=latest_actions,
-            args=args,
-        )
-        retry_actions = self._build_actions(
-            driver=active_driver,
-            args=args,
-            task_id="worker_search_task_retry_combined",
-        )
-        log_step(f"关键词+姓名搜索重试：{combined_search_text}")
-        return self._search_and_open_matching_video(
-            actions=retry_actions,
-            args=args,
-            search_text=combined_search_text,
-            target_author=doctor_name,
-            waits=waits,
-        )
-
-    def _find_and_open_matching_video(
-        self,
-        *,
-        actions: DouyinActions,
-        args: argparse.Namespace,
-        target_author: str,
-        force_stop_on_not_found: bool = True,
-    ):
-        driver = actions.driver
-        try:
-            result, driver = self._scan_search_result_tab_for_author(
-                actions=actions,
-                args=args,
-                target_author=target_author,
-                tab_label="当前搜索结果页",
-                task_id_prefix="worker_search_task_after_result_swipe",
-            )
-            if result is not None:
-                return result, driver
-
-            log_step("当前搜索结果页连续 3 次未找到目标作者，切换到“视频”Tab 后继续查找")
-            actions = self._build_actions(
-                driver=driver,
-                args=args,
-                task_id="worker_search_task_before_video_tab",
-            )
-            self._click_search_tab_by_label(actions.driver, "视频")
-            log_step("视频 Tab 已点击，等待 2 秒后重连读取视频结果")
-            time.sleep(2)
-            driver = self._reconnect_driver(args=args, driver=driver)
-            actions = self._build_actions(
-                driver=driver,
-                args=args,
-                task_id="worker_search_task_after_video_tab",
-            )
-            result, driver = self._scan_search_result_tab_for_author(
-                actions=actions,
-                args=args,
-                target_author=target_author,
-                tab_label="视频 Tab",
-                task_id_prefix="worker_search_task_after_video_tab_swipe",
-            )
-            if result is not None:
-                return result, driver
-
-            fail_reason = f"搜索结果未找到目标账号：{target_author}"
-            if force_stop_on_not_found:
-                log_step(f"{fail_reason}，强制退出抖音并结束任务")
-                self._force_stop_douyin(args)
-            else:
-                log_step(f"{fail_reason}，保留会话并交给下一搜索方案重试")
-            raise SearchResultNotFoundError(fail_reason, active_driver=driver)
-        except SearchResultNotFoundError:
-            if force_stop_on_not_found:
-                quit_with_timeout(driver, args.quit_timeout_seconds)
-            raise
-        except Exception:
-            quit_with_timeout(driver, args.quit_timeout_seconds)
-            raise
-
-    def _scan_search_result_tab_for_author(
-        self,
-        *,
-        actions: DouyinActions,
-        args: argparse.Namespace,
-        target_author: str,
-        tab_label: str,
-        task_id_prefix: str,
-    ):
-        driver = actions.driver
-        for attempt in range(args.max_swipes + 1):
-            log_step(f"{tab_label}：读取搜索结果作者列表：第 {attempt + 1} 次")
-            visible_authors = actions.get_texts("video_author_name")
-            log_step(f"{tab_label}：当前可见作者：{visible_authors}")
-            log_step(f"{tab_label}：匹配目标作者：{target_author}")
-
-            matched_items = collect_matched_author_elements(actions, target_author=target_author)
-            for author_text, liked, like_desc, element in matched_items:
-                if liked:
-                    log_step(f"{tab_label}：跳过已点赞视频：{author_text}，likeDesc={like_desc!r}")
-                    continue
-                log_step(f"{tab_label}：找到未点赞目标作者并打开视频：{author_text}，likeDesc={like_desc!r}")
-                element.click()
-                log_step(f"临时测试模式：已打开目标作者视频，停止后续视频动作：{author_text}")
-                return author_text, driver
-
-            if matched_items:
-                log_step(f"{tab_label}：当前页命中目标作者，但全部已点赞：{target_author}")
-            else:
-                log_step(f"{tab_label}：当前页未找到目标作者：{target_author}")
-            if attempt >= args.max_swipes:
-                break
-
-            log_step(f"{tab_label}：执行手指向上滑屏幕，翻到下面内容：percent={args.swipe_percent:.2f}")
-            actions.swipe_up(percent=args.swipe_percent)
-            log_step(f"{tab_label}：翻页后等待 2 秒，再重连读取新页面")
-            time.sleep(2)
-            driver = self._reconnect_driver(args=args, driver=driver)
-            actions = self._build_actions(
-                driver=driver,
-                args=args,
-                task_id=f"{task_id_prefix}_{attempt + 1}",
-            )
-
-        return None, driver
+            time.sleep(reopen_interval_seconds)
 
     def _like_video_and_reconnect(
         self,
@@ -1890,295 +1362,6 @@ class DouyinAppiumTaskExecutor:
         self._latest_actions = actions
         return actions
 
-    def _click_search_tab_by_label(
-        self,
-        driver,
-        label: str,
-        *,
-        max_top_y: int = 520,
-    ) -> None:
-        started_at = time.monotonic()
-        source = driver.page_source
-        candidates = self._search_tab_candidates_from_source(source, max_top_y=max_top_y)
-        if candidates:
-            formatted = ", ".join(
-                f"#{index + 1}:{item['label']}@{item['click_bounds']}"
-                for index, item in enumerate(candidates)
-            )
-            log_step(f"search tab candidates: {formatted}")
-        else:
-            log_step("search tab candidates not found in page source; fallback to XPath")
-
-        target = next((item for item in candidates if item["label"] == label), None)
-        if target is None:
-            target = next((item for item in candidates if label in item["label"]), None)
-        if target is not None:
-            left, top, right, bottom = target["click_bounds"]
-            x = (left + right) // 2
-            y = (top + bottom) // 2
-            driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-            log_step(
-                f"search tab clicked: label={label}, "
-                f"bounds={[left, top, right, bottom]}, center=({x},{y}), "
-                f"elapsed={time.monotonic() - started_at:.2f}s"
-            )
-            return
-
-        xpath = f'//*[@text="{label}" or @content-desc="{label}" or contains(@text,"{label}") or contains(@content-desc,"{label}")]'
-        try:
-            element = WebDriverWait(driver, 5).until(
-                lambda current_driver: current_driver.find_element(AppiumBy.XPATH, xpath)
-            )
-            self._click_element_center(driver, element, f"切换Tab {label}", started_at)
-            return
-        except Exception as exc:  # noqa: BLE001 - include visible candidates in the failure.
-            visible = [item["label"] for item in candidates]
-            raise RuntimeError(f"search tab not found: {label}, visible tabs={visible}") from exc
-
-    @staticmethod
-    def _search_tab_candidates_from_source(
-        source: str,
-        *,
-        max_top_y: int = 520,
-    ) -> list[dict[str, object]]:
-        try:
-            root = ET.fromstring(source)
-        except ET.ParseError:
-            return []
-
-        parent_map = {child: parent for parent in root.iter() for child in parent}
-        candidates: list[dict[str, object]] = []
-        seen: set[tuple[str, tuple[int, int, int, int]]] = set()
-        for node in root.iter():
-            label = (
-                node.attrib.get("text")
-                or node.attrib.get("content-desc")
-                or ""
-            ).strip()
-            resource_id = node.attrib.get("resource-id", "")
-            if not label:
-                continue
-            if not any(word in label for word in SEARCH_TAB_WORDS) and resource_id != "android:id/text1":
-                continue
-
-            label_bounds = DouyinAppiumTaskExecutor._parse_source_bounds(
-                node.attrib.get("bounds")
-            )
-            if label_bounds is None or label_bounds[1] > max_top_y:
-                continue
-            click_node = DouyinAppiumTaskExecutor._closest_click_node(
-                node,
-                parent_map,
-                max_top_y=max_top_y,
-            )
-            click_bounds = (
-                DouyinAppiumTaskExecutor._parse_source_bounds(
-                    click_node.attrib.get("bounds")
-                )
-                or label_bounds
-            )
-            key = (label, click_bounds)
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append(
-                {
-                    "label": label,
-                    "label_bounds": label_bounds,
-                    "click_bounds": click_bounds,
-                    "selected": click_node.attrib.get(
-                        "selected",
-                        node.attrib.get("selected", ""),
-                    ),
-                }
-            )
-        return sorted(candidates, key=lambda item: (item["click_bounds"][1], item["click_bounds"][0]))
-
-    @staticmethod
-    def _parse_source_bounds(value: str | None) -> tuple[int, int, int, int] | None:
-        if not value:
-            return None
-        match = BOUNDS_RE.fullmatch(value)
-        if not match:
-            return None
-        left, top, right, bottom = (int(item) for item in match.groups())
-        if right <= left or bottom <= top:
-            return None
-        return left, top, right, bottom
-
-    @staticmethod
-    def _closest_click_node(
-        node: ET.Element,
-        parent_map: dict[ET.Element, ET.Element],
-        *,
-        max_top_y: int,
-    ) -> ET.Element:
-        current = node
-        while True:
-            bounds = DouyinAppiumTaskExecutor._parse_source_bounds(
-                current.attrib.get("bounds")
-            )
-            if bounds and bounds[1] <= max_top_y and current.attrib.get("clickable") == "true":
-                return current
-            parent = parent_map.get(current)
-            if parent is None:
-                return node
-            parent_bounds = DouyinAppiumTaskExecutor._parse_source_bounds(
-                parent.attrib.get("bounds")
-            )
-            if parent_bounds is None or parent_bounds[1] > max_top_y:
-                return node
-            parent_width = parent_bounds[2] - parent_bounds[0]
-            parent_height = parent_bounds[3] - parent_bounds[1]
-            if parent_width > 500 or parent_height > 180:
-                return node
-            current = parent
-
-    def _click_home_search_entry(self, driver) -> None:
-        started_at = time.monotonic()
-        capabilities = getattr(driver, "capabilities", {}) or {}
-        udid = str(
-            capabilities.get("udid")
-            or capabilities.get("deviceUDID")
-            or capabilities.get("appium:udid")
-            or ""
-        ).strip()
-        if udid:
-            result = subprocess.run(
-                ["adb", "-s", udid, "shell", "input", "tap", "990", "164"],
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            )
-            if result.returncode == 0:
-                log_step(
-                    "Home search entry clicked via adb tap point=(990,164), "
-                    f"elapsed={time.monotonic() - started_at:.2f}s"
-                )
-                return
-            log_step(
-                "adb tap home search entry failed, continue with Appium fallback: "
-                f"returnCode={result.returncode}, stderr={result.stderr.strip()}"
-            )
-        try:
-            element = WebDriverWait(driver, 3).until(
-                lambda current_driver: current_driver.find_element(
-                    AppiumBy.ACCESSIBILITY_ID,
-                    "搜索",
-                )
-            )
-            rect = element.rect
-            x = int(rect["x"] + rect["width"] / 2)
-            y = int(rect["y"] + rect["height"] / 2)
-            driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-            log_step(
-                "首页搜索入口已点击："
-                f"accessibility id=搜索, rect={rect}, center=({x},{y}), "
-                f"elapsed={time.monotonic() - started_at:.2f}s"
-            )
-            return
-        except Exception as exc:  # noqa: BLE001 - fallback to ratio click below.
-            log_step(
-                "accessibility id=搜索 点击失败，准备使用比例坐标兜底："
-                f"{type(exc).__name__}: {exc}"
-            )
-
-        size = driver.get_window_size()
-        x = int(size["width"] * 0.925)
-        y = int(size["height"] * 0.082)
-        driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-        log_step(
-            "首页搜索入口已点击："
-            f"ratio=(0.925,0.082), size={size}, point=({x},{y}), "
-            f"elapsed={time.monotonic() - started_at:.2f}s"
-        )
-
-    def _input_search_text(self, driver, search_input, search_text: str) -> None:
-        started_at = time.monotonic()
-        try:
-            search_input.clear()
-        except Exception as exc:  # noqa: BLE001 - continue with focused input below.
-            log_step(f"搜索输入框 clear 失败，继续尝试输入：{type(exc).__name__}: {exc}")
-
-        errors: list[str] = []
-        try:
-            self._click_element_center(driver, search_input, "搜索输入框", started_at)
-            driver.execute_script("mobile: type", {"text": search_text})
-            log_step(f"搜索词通过 mobile: type 输入完成：{search_text}")
-            return
-        except Exception as exc:  # noqa: BLE001 - fallback to send_keys below.
-            message = f"mobile: type failed: {type(exc).__name__}: {exc}"
-            errors.append(message)
-            log_step(f"搜索词 mobile: type 输入失败，准备回退 send_keys：{message}")
-
-        try:
-            search_input.clear()
-        except Exception:
-            pass
-        try:
-            search_input.click()
-            search_input.send_keys(search_text)
-            log_step(f"搜索词通过 send_keys 输入完成：{search_text}")
-            return
-        except Exception as exc:  # noqa: BLE001 - fallback to clipboard paste below.
-            message = f"send_keys failed: {type(exc).__name__}: {exc}"
-            errors.append(message)
-            log_step(f"搜索词 send_keys 输入失败，准备回退剪贴板粘贴：{message}")
-
-        try:
-            search_input.clear()
-            driver.set_clipboard_text(search_text)
-            self._click_element_center(driver, search_input, "搜索输入框", started_at)
-            driver.press_keycode(279)
-            log_step(f"搜索词通过剪贴板粘贴完成：{search_text}")
-            return
-        except Exception as exc:  # noqa: BLE001 - fallback to send_keys below.
-            message = f"clipboard paste failed: {type(exc).__name__}: {exc}"
-            errors.append(message)
-            log_step(f"搜索词剪贴板粘贴失败：{message}")
-        raise RuntimeError(f"搜索词输入失败：{errors}")
-
-    def _submit_search(self, driver) -> None:
-        started_at = time.monotonic()
-        time.sleep(0.5)
-        try:
-            driver.execute_script("mobile: performEditorAction", {"action": "search"})
-            log_step(f"键盘搜索动作已执行：elapsed={time.monotonic() - started_at:.2f}s")
-            return
-        except Exception as exc:  # noqa: BLE001 - fallback to visible button below.
-            log_step(f"键盘搜索动作失败，准备点击右上角搜索按钮：{type(exc).__name__}: {exc}")
-
-        try:
-            element = WebDriverWait(driver, 5).until(
-                lambda current_driver: current_driver.find_element(
-                    AppiumBy.ID,
-                    "com.ss.android.ugc.aweme:id/4un",
-                )
-            )
-            self._click_element_center(driver, element, "搜索提交按钮", started_at)
-            return
-        except Exception as exc:  # noqa: BLE001 - fallback to keyboard enter below.
-            log_step(
-                "搜索提交按钮定位失败，准备使用回车键兜底："
-                f"{type(exc).__name__}: {exc}"
-            )
-
-        driver.press_keycode(66)
-        log_step(f"回车键搜索动作已执行：elapsed={time.monotonic() - started_at:.2f}s")
-
-    def _click_element_center(self, driver, element, label: str, started_at: float) -> None:
-        rect = element.rect
-        x = int(rect["x"] + rect["width"] / 2)
-        y = int(rect["y"] + rect["height"] / 2)
-        driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-        log_step(
-            f"{label}已点击："
-            f"rect={rect}, center=({x},{y}), elapsed={time.monotonic() - started_at:.2f}s"
-        )
-
     def _config_with_backend_timing(
         self, api_client: AutomationApiClient
     ) -> DouyinAppiumExecutorConfig:
@@ -2195,9 +1378,6 @@ class DouyinAppiumTaskExecutor:
         timing_settings: list[AutomationTimingSettingResult],
     ) -> DouyinAppiumExecutorConfig:
         field_mapping = {
-            "before_input": ("before_input_min_seconds", "before_input_max_seconds"),
-            "after_input": ("after_input_min_seconds", "after_input_max_seconds"),
-            "after_search": ("after_search_min_seconds", "after_search_max_seconds"),
             "watch_video": ("watch_min_seconds", "watch_max_seconds"),
             "after_like": ("after_like_min_seconds", "after_like_max_seconds"),
             "after_favorite": ("after_favorite_min_seconds", "after_favorite_max_seconds"),
@@ -2214,8 +1394,11 @@ class DouyinAppiumTaskExecutor:
         }
         values: dict[str, float] = {}
         for setting in timing_settings:
-            if setting.key == "douyin_restart_interval":
-                values["douyin_restart_interval_minutes"] = setting.max_seconds
+            if setting.key == "douyin_exit_interval":
+                values["douyin_exit_interval_minutes"] = setting.max_seconds
+                continue
+            if setting.key == "douyin_reopen_interval":
+                values["douyin_reopen_interval_minutes"] = setting.max_seconds
                 continue
             fields = field_mapping.get(setting.key)
             if fields is None:
@@ -2244,11 +1427,6 @@ class DouyinAppiumTaskExecutor:
             package_name=config.package_name,
             app_activity=config.app_activity,
             app=config.app,
-            search_button_xpath=DEFAULT_SEARCH_BUTTON_XPATH,
-            input_xpath=DEFAULT_INPUT_XPATH,
-            submit_xpath=DEFAULT_SUBMIT_XPATH,
-            video_tab_xpath=DEFAULT_VIDEO_TAB_XPATH,
-            author_xpath=DEFAULT_AUTHOR_XPATH,
             like_xpath=DEFAULT_LIKE_XPATH,
             favorite_xpath=DEFAULT_FAVORITE_XPATH,
             comment_button_xpath=DEFAULT_COMMENT_BUTTON_XPATH,
@@ -2261,12 +1439,6 @@ class DouyinAppiumTaskExecutor:
             after_open_seconds=config.after_open_seconds,
             return_home_step_wait_seconds=config.return_home_step_wait_seconds,
             return_home_max_back_presses=config.return_home_max_back_presses,
-            before_input_min_seconds=config.before_input_min_seconds,
-            before_input_max_seconds=config.before_input_max_seconds,
-            after_input_min_seconds=config.after_input_min_seconds,
-            after_input_max_seconds=config.after_input_max_seconds,
-            after_search_min_seconds=config.after_search_min_seconds,
-            after_search_max_seconds=config.after_search_max_seconds,
             after_swipe_min_seconds=config.after_swipe_min_seconds,
             after_swipe_max_seconds=config.after_swipe_max_seconds,
             watch_min_seconds=config.watch_min_seconds,
@@ -2283,7 +1455,8 @@ class DouyinAppiumTaskExecutor:
             after_comment_input_max_seconds=config.after_comment_input_max_seconds,
             before_send_min_seconds=config.before_send_min_seconds,
             before_send_max_seconds=config.before_send_max_seconds,
-            douyin_restart_interval_minutes=config.douyin_restart_interval_minutes,
+            douyin_exit_interval_minutes=config.douyin_exit_interval_minutes,
+            douyin_reopen_interval_minutes=config.douyin_reopen_interval_minutes,
             max_swipes=config.max_swipes,
             swipe_percent=config.swipe_percent,
             allow_unverified_home_after_restart=config.allow_unverified_home_after_restart,

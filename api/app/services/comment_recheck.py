@@ -26,7 +26,7 @@ def normalize_comment_recheck_status(status: str | None) -> str:
 
 
 def _comment_recheck_base_statement() -> Select[
-    tuple[AutomationResult, DailyTask, str, str, str, CommentRecheckRecord | None]
+    tuple[AutomationResult, DailyTask, str, str | None, str, CommentRecheckRecord | None]
 ]:
     return (
         select(
@@ -39,7 +39,7 @@ def _comment_recheck_base_statement() -> Select[
         )
         .join(DailyTask, DailyTask.id == AutomationResult.task_id)
         .join(Doctor, Doctor.id == AutomationResult.doctor_id)
-        .join(DoctorKeyword, DoctorKeyword.id == AutomationResult.keyword_id)
+        .outerjoin(DoctorKeyword, DoctorKeyword.id == AutomationResult.keyword_id)
         .join(Device, Device.id == AutomationResult.device_id)
         .outerjoin(
             CommentRecheckRecord,
@@ -53,7 +53,7 @@ def _comment_recheck_base_statement() -> Select[
 
 def _apply_comment_recheck_filters(
     statement: Select[
-        tuple[AutomationResult, DailyTask, str, str, str, CommentRecheckRecord | None]
+        tuple[AutomationResult, DailyTask, str, str | None, str, CommentRecheckRecord | None]
     ],
     doctor_id: int | None,
     keyword_id: int | None,
@@ -61,7 +61,7 @@ def _apply_comment_recheck_filters(
     keyword: str | None,
     start_date: date | None,
     end_date: date | None,
-) -> Select[tuple[AutomationResult, DailyTask, str, str, str, CommentRecheckRecord | None]]:
+) -> Select[tuple[AutomationResult, DailyTask, str, str | None, str, CommentRecheckRecord | None]]:
     if doctor_id:
         statement = statement.where(AutomationResult.doctor_id == doctor_id)
     if keyword_id:
@@ -97,7 +97,7 @@ def _to_comment_recheck_item_read(
     result: AutomationResult,
     task: DailyTask,
     doctor_name: str,
-    keyword: str,
+    keyword: str | None,
     device_name: str,
     record: CommentRecheckRecord | None,
 ) -> CommentRecheckItemRead:
@@ -109,7 +109,7 @@ def _to_comment_recheck_item_read(
         doctor_id=result.doctor_id,
         doctor_name=doctor_name,
         keyword_id=result.keyword_id,
-        keyword=keyword,
+        keyword=keyword or "",
         device_name=device_name,
         publish_account=result.publish_account,
         comment_content=result.comment_content,

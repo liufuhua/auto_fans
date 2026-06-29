@@ -15,7 +15,7 @@ export type AutomationResultItem = {
   taskDate: string
   doctorId: number
   doctorName: string
-  keywordId: number
+  keywordId?: number | null
   keyword: string
   deviceId: number
   deviceName: string

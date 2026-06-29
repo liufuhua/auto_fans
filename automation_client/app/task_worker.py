@@ -228,80 +228,16 @@ class TaskWorker:
         ):
             return self._run_home_feed_task(task)
 
-        task_item_id = self._required_int(task.task_item_id, "taskItemId")
-        comment_bank_item_id = self._required_int(task.comment_bank_item_id, "commentBankItemId")
-        with self._device_log_context(task_item_id=task_item_id):
-            logger.info(
-                "claimed task: device=%s taskItemId=%s doctor=%s keyword=%s",
+        with self._device_log_context():
+            logger.warning(
+                "legacy search task is no longer supported: device=%s taskItemId=%s",
                 self.device.name,
                 task.task_item_id,
-                task.doctor_name,
-                task.keyword,
             )
-            start_result = self.api_client.start_task(
-                task_item_id=task_item_id,
-                udid=self.device.udid,
-                comment_bank_item_id=comment_bank_item_id,
-                publish_account=self.publish_account,
-            )
-            logger.info(
-                "started task: device=%s taskItemId=%s resultId=%s status=%s",
-                self.device.name,
-                task_item_id,
-                start_result.result_id,
-                start_result.status,
-            )
-        with self._device_log_context(
-            task_item_id=task_item_id,
-            result_id=start_result.result_id,
-        ):
-            self._set_runtime_status_if_online("running")
-            try:
-                execution_result = self._execute_task(task, start_result)
-                if not execution_result.report_to_backend:
-                    logger.info(
-                        "skip report task: device=%s taskItemId=%s resultId=%s status=%s",
-                        self.device.name,
-                        task_item_id,
-                        start_result.result_id,
-                        execution_result.status,
-                    )
-                    return TaskWorkerRunResult(claimed_task=True)
-                try:
-                    report_result = self.api_client.report_task(
-                        task_item_id=task_item_id,
-                        udid=self.device.udid,
-                        result_id=start_result.result_id,
-                        comment_bank_item_id=comment_bank_item_id,
-                        publish_account=self.publish_account,
-                        status=execution_result.status,
-                        video_link=execution_result.video_link,
-                        result_summary=execution_result.result_summary,
-                        fail_reason=execution_result.fail_reason,
-                        screenshot_url=execution_result.screenshot_url,
-                        log_url=execution_result.log_url or self.log_file_path.as_posix(),
-                    )
-                except Exception as exc:
-                    cleanup_after_report_failure = getattr(
-                        self.executor,
-                        "cleanup_after_report_failure",
-                        None,
-                    )
-                    if callable(cleanup_after_report_failure):
-                        cleanup_after_report_failure(device=self.device, error=exc)
-                    raise
-                logger.info(
-                    "reported task: device=%s taskItemId=%s resultId=%s status=%s",
-                    self.device.name,
-                    task_item_id,
-                    report_result.result_id,
-                    report_result.status,
-                )
-                return TaskWorkerRunResult(claimed_task=True)
-            finally:
-                if self.auto_stop_after_task:
-                    self._auto_stop_business("task iteration finished", force=True)
-                self._set_runtime_status_if_online("idle")
+        return TaskWorkerRunResult(
+            claimed_task=False,
+            no_task_reason="legacy_search_task_unsupported",
+        )
 
     def _run_home_feed_task(self, task: ClaimTaskResult) -> TaskWorkerRunResult:
         doctor_names = ", ".join(item.doctor_name for item in task.doctors)
@@ -444,13 +380,6 @@ class TaskWorker:
             result_id=result_id,
             log_file_path=self.log_file_path,
         )
-
-    @staticmethod
-    def _required_int(value: int | None, field_name: str) -> int:
-        if value is None:
-            raise ValueError(f"Claimed task missing required field: {field_name}")
-        return value
-
 
 def _single_timing_value(
     settings: list[AutomationTimingSettingResult],

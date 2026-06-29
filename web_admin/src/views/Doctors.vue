@@ -10,7 +10,6 @@ import {
   Plus,
   Refresh,
   Search,
-  View,
 } from '@element-plus/icons-vue'
 import {
   createDoctorApi,
@@ -201,12 +200,6 @@ const loadKeywords = async () => {
   } finally {
     keywordLoading.value = false
   }
-}
-
-const openKeywordDrawer = async (doctor: DoctorItem) => {
-  currentDoctor.value = doctor
-  keywordDrawerVisible.value = true
-  await loadKeywords()
 }
 
 const openCreateKeywordDialog = () => {
@@ -514,19 +507,11 @@ onBeforeUnmount(() => {
           <template #default="{ row }">{{ row.realName || '-' }}</template>
         </el-table-column>
         <el-table-column label="备注" min-width="110" prop="remark" show-overflow-tooltip />
-        <el-table-column label="剩余评论" min-width="220">
+        <el-table-column label="剩余评论总数" width="130">
           <template #default="{ row }">
-            <div v-if="row.keywordCommentCounts?.length" class="comment-count-list">
-              <el-tag
-                v-for="item in row.keywordCommentCounts"
-                :key="item.keywordId"
-                :type="item.remainingCommentCount > 0 ? 'success' : 'danger'"
-                effect="plain"
-              >
-                {{ item.keyword }}剩余{{ item.remainingCommentCount }}条
-              </el-tag>
-            </div>
-            <el-tag v-else type="danger" effect="plain">暂无关键词</el-tag>
+            <el-tag :type="row.remainingCommentCount > 0 ? 'success' : 'danger'" effect="plain">
+              {{ row.remainingCommentCount }} 条
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100" prop="status" sortable="custom">
@@ -541,11 +526,8 @@ onBeforeUnmount(() => {
         <el-table-column label="更新时间" min-width="170" prop="updatedAt" sortable="custom">
           <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="280">
+        <el-table-column label="操作" width="220">
           <template #default="{ row }">
-            <el-button :icon="View" link type="primary" @click="openKeywordDrawer(row)">
-              关键词
-            </el-button>
             <el-button :icon="Edit" link type="primary" @click="openEditDialog(row)"
               >编辑</el-button
             >
@@ -704,12 +686,6 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   margin-bottom: 12px;
-}
-
-.comment-count-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .sort-cell {

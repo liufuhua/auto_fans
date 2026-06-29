@@ -46,8 +46,6 @@ class FakeDriver:
         self.calls: list[tuple[str, str]] = []
         self.clipboard_text = ""
         self.elements = {
-            ("accessibility id", "搜索"): FakeElement("search_button", self.calls),
-            ("id", "search_input"): FakeElement("search_input", self.calls),
             (
                 "-android uiautomator",
                 'new UiSelector().text("用户")',
@@ -109,8 +107,6 @@ class FakeDriver:
 def build_locators() -> LocatorRepository:
     return LocatorRepository(
         {
-            "search_button": LocatorSpec("search_button", "accessibility_id", "搜索"),
-            "search_input": LocatorSpec("search_input", "id", "search_input"),
             "user_tab": LocatorSpec("user_tab", "text", "用户"),
             "doctor_page_entry": LocatorSpec("doctor_page_entry", "xpath", "//doctor"),
             "video_entry": LocatorSpec("video_entry", "xpath", "//video"),
@@ -134,7 +130,6 @@ def test_douyin_fixed_actions_sequence(tmp_path: Path) -> None:
     )
 
     actions.open_douyin()
-    actions.search_keyword("脑膜瘤")
     actions.enter_doctor_page("张明山")
     actions.open_target_video()
     actions.like_video()
@@ -143,10 +138,6 @@ def test_douyin_fixed_actions_sequence(tmp_path: Path) -> None:
 
     assert driver.calls == [
         ("activate_app", "com.ss.android.ugc.aweme"),
-        ("click", "search_button"),
-        ("clear", "search_input"),
-        ("send_keys", "search_input:脑膜瘤"),
-        ("press_keycode", "66"),
         ("click", "user_tab"),
         ("click", "doctor_page_entry"),
         ("click", "video_entry"),

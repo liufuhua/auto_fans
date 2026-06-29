@@ -114,7 +114,7 @@ const parseExcelRows = async (
       searchWord: String(row['搜索词'] || row['searchWord'] || row['keyword'] || '').trim(),
       content: String(row['评论内容'] || row['content'] || '').trim(),
     }))
-    .filter((row) => row.searchWord && row.content)
+    .filter((row) => row.content)
 }
 
 export const getCommentBankApi = async (
@@ -184,22 +184,18 @@ export const importCommentBankExcelApi = async (
 
     const currentItems = readComments()
     const nextIdStart = Math.max(0, ...currentItems.map((item) => item.id)) + 1
-    let skipped = 0
+    const skipped = 0
     const importedItems: CommentBankItem[] = []
 
     rows.forEach((row, index) => {
       const matchedKeyword = keywords.find((item) => item.keyword === row.searchWord)
-      if (!matchedKeyword) {
-        skipped += 1
-        return
-      }
 
       importedItems.push({
         id: nextIdStart + importedItems.length + index,
         doctorId: doctor.id,
         doctorName: doctor.name,
-        keywordId: matchedKeyword.id,
-        keyword: matchedKeyword.keyword,
+        keywordId: matchedKeyword?.id ?? null,
+        keyword: matchedKeyword?.keyword || row.searchWord,
         content: row.content,
         status: 'unused',
         createdAt: new Date().toISOString(),
