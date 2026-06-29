@@ -35,7 +35,7 @@
 - Modify: `automation_client/tests/test_task_worker.py`
 - Review: `automation_client/app/task_worker.py`
 
-- [ ] **Step 1: 确认现有函数**
+- [x] **Step 1: 确认现有函数**
 
 现有函数保留：
 
@@ -56,7 +56,7 @@ def is_minute_in_runtime_window(
     return current >= start or current < end
 ```
 
-- [ ] **Step 2: 补充测试用例**
+- [x] **Step 2: 补充测试用例**
 
 在 `automation_client/tests/test_task_worker.py` 中确认或补充：
 
@@ -69,7 +69,7 @@ def test_runtime_window_allows_same_start_end_as_full_day() -> None:
     assert is_minute_in_runtime_window(23 * 60 + 59, 8 * 60, 8 * 60)
 ```
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 Run:
 
@@ -89,7 +89,7 @@ Expected: runtime window 测试通过。
 - Modify: `automation_client/app/task_runner.py`
 - Test: `automation_client/tests/test_task_worker.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `automation_client/tests/test_task_worker.py` 增加：
 
@@ -131,7 +131,7 @@ def test_worker_waits_five_minutes_outside_runtime_window(monkeypatch) -> None:
     assert waits == [300]
 ```
 
-- [ ] **Step 2: 实现参数**
+- [x] **Step 2: 实现参数**
 
 在 `TaskWorker.__init__()` 增加参数：
 
@@ -145,7 +145,7 @@ outside_runtime_window_poll_seconds: float = 300,
 self.outside_runtime_window_poll_seconds = outside_runtime_window_poll_seconds
 ```
 
-- [ ] **Step 3: 增加等待函数**
+- [x] **Step 3: 增加等待函数**
 
 在 `TaskWorker` 中新增：
 
@@ -154,7 +154,7 @@ def _wait_outside_runtime_window(self) -> None:
     self.stop_event.wait(self.outside_runtime_window_poll_seconds)
 ```
 
-- [ ] **Step 4: 替换时间段外等待**
+- [x] **Step 4: 替换时间段外等待**
 
 在 `TaskWorker.run_once()` 的 `outside_runtime_window` 分支中，把：
 
@@ -168,7 +168,7 @@ self._wait()
 self._wait_outside_runtime_window()
 ```
 
-- [ ] **Step 5: TaskRunner 传参**
+- [x] **Step 5: TaskRunner 传参**
 
 在 `TaskRunner.__init__()` 增加：
 
@@ -182,7 +182,7 @@ outside_runtime_window_poll_seconds: float = 300,
 outside_runtime_window_poll_seconds=self.outside_runtime_window_poll_seconds,
 ```
 
-- [ ] **Step 6: 运行测试**
+- [x] **Step 6: 运行测试**
 
 Run:
 
@@ -201,7 +201,7 @@ Expected: 时间段外等待 300 秒测试通过。
 - Modify: `automation_client/app/task_worker.py`
 - Test: `automation_client/tests/test_task_worker.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新增测试：
 
@@ -229,7 +229,7 @@ def test_home_feed_worker_does_not_auto_stop_business_after_iteration() -> None:
     assert api_client.auto_stop_requests == []
 ```
 
-- [ ] **Step 2: 修改 `_run_home_feed_task()`**
+- [x] **Step 2: 修改 `_run_home_feed_task()`**
 
 删除或绕开首页流 finally 中的自动停止：
 
@@ -245,7 +245,7 @@ if self.auto_stop_after_task:
     self._auto_stop_business("task iteration finished", force=True)
 ```
 
-- [ ] **Step 3: 修改无任务分支**
+- [x] **Step 3: 修改无任务分支**
 
 首页流 claim 返回 `has_task=False` 时，不再自动停止后台业务。保留日志和等待：
 
@@ -256,7 +256,7 @@ if self.auto_stop_after_task and no_task_reason not in {"no_doctors", "outside_r
 
 推荐更直接：新首页流阶段彻底移除 `no task available` 自动停止。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run:
 
@@ -275,7 +275,7 @@ Expected: 首页流不会自动停止后台业务。
 - Modify: `automation_client/app/douyin_task_executor.py`
 - Test: `automation_client/tests/test_douyin_task_executor.py`
 
-- [ ] **Step 1: 新增计时辅助函数测试**
+- [x] **Step 1: 新增计时辅助函数测试**
 
 新增测试：
 
@@ -289,7 +289,7 @@ def test_exit_interval_reached_uses_minutes(monkeypatch) -> None:
     assert executor._exit_interval_reached(100.0, args, now=100.0 + 1200)
 ```
 
-- [ ] **Step 2: 实现 `_exit_interval_reached()`**
+- [x] **Step 2: 实现 `_exit_interval_reached()`**
 
 在 `DouyinAppiumTaskExecutor` 中新增：
 
@@ -308,7 +308,7 @@ def _exit_interval_reached(
     return current - cycle_started_at >= interval_seconds
 ```
 
-- [ ] **Step 3: 在首页流循环中使用**
+- [x] **Step 3: 在首页流循环中使用**
 
 在 `_execute_home_feed_task()` 中创建：
 
@@ -325,7 +325,7 @@ if self._exit_interval_reached(cycle_started_at, args):
     continue
 ```
 
-- [ ] **Step 4: 命中医生后延迟退出**
+- [x] **Step 4: 命中医生后延迟退出**
 
 在命中医生并执行 `_execute_home_feed_matched_comment()` 后检查：
 
@@ -338,7 +338,7 @@ if self._exit_interval_reached(cycle_started_at, args):
 
 这样命中目标时不会中断评论和上报，会等上报完成后再退出抖音。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run:
 
@@ -357,7 +357,7 @@ Expected: 退出计时测试通过。
 - Modify: `automation_client/app/douyin_task_executor.py`
 - Test: `automation_client/tests/test_douyin_task_executor.py`
 
-- [ ] **Step 1: 写重启循环测试**
+- [x] **Step 1: 写重启循环测试**
 
 新增测试：
 
@@ -386,7 +386,7 @@ def test_restart_home_feed_cycle_force_stops_waits_and_reopens(monkeypatch) -> N
     assert calls == ["force_stop", "home"]
 ```
 
-- [ ] **Step 2: 实现 `_restart_home_feed_cycle()`**
+- [x] **Step 2: 实现 `_restart_home_feed_cycle()`**
 
 在 `DouyinAppiumTaskExecutor` 中新增：
 
@@ -403,7 +403,7 @@ def _restart_home_feed_cycle(self, *, driver, args: argparse.Namespace):
 
 说明：`_force_stop_douyin()` 设置 `_douyin_reopen_pending=True`；`_ensure_douyin_home_page()` 已通过 `_wait_before_reopen_douyin_if_needed()` 等待 `douyin_reopen_interval_minutes`。
 
-- [ ] **Step 3: 调整首页流循环**
+- [x] **Step 3: 调整首页流循环**
 
 在 `_execute_home_feed_task()` 中，退出时间到达后调用：
 
@@ -412,7 +412,7 @@ active_driver = self._restart_home_feed_cycle(driver=active_driver, args=args)
 cycle_started_at = time.monotonic()
 ```
 
-- [ ] **Step 4: 避免单次任务结束就 return**
+- [x] **Step 4: 避免单次任务结束就 return**
 
 当前命中一次医生后会：
 
@@ -428,7 +428,7 @@ continue
 
 让设备在运行时间段内持续刷首页流，由外层 `TaskWorker` 的下一轮时间段判断决定是否继续 claim。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run:
 
@@ -449,7 +449,7 @@ Expected: 执行器测试全部通过。
 - Test: `api/tests/test_automation_timing_defaults.py`
 - Test: `web_admin`
 
-- [ ] **Step 1: 后端配置测试**
+- [x] **Step 1: 后端配置测试**
 
 Run:
 
@@ -460,7 +460,7 @@ cd E:\auto_fans\api
 
 Expected: 通过。
 
-- [ ] **Step 2: 客户端 worker 测试**
+- [x] **Step 2: 客户端 worker 测试**
 
 Run:
 
@@ -471,7 +471,7 @@ cd E:\auto_fans\automation_client
 
 Expected: 通过。
 
-- [ ] **Step 3: 客户端执行器测试**
+- [x] **Step 3: 客户端执行器测试**
 
 Run:
 
@@ -482,7 +482,7 @@ cd E:\auto_fans\automation_client
 
 Expected: 通过。
 
-- [ ] **Step 4: 前端类型检查与构建**
+- [x] **Step 4: 前端类型检查与构建**
 
 Run:
 
@@ -503,4 +503,3 @@ Expected: `typecheck` 和 `build` 通过。
 - 首页流运行到 `退出抖音时间`：未命中时直接退出；命中时等上报完成后退出。
 - 退出后等待 `重启抖音时间`，重新打开抖音继续首页流。
 - 后台点击停止业务：下一轮不再 claim 和执行。
-

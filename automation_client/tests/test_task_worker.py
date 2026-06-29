@@ -127,10 +127,8 @@ def test_worker_waits_when_no_task() -> None:
     assert len(api_client.claim_requests) == 1
     assert api_client.start_requests == []
     assert api_client.report_requests == []
-    assert api_client.auto_stop_requests == [
-        {"remark": "device_01: no task available", "force": False}
-    ]
-    assert stopped == [True]
+    assert api_client.auto_stop_requests == []
+    assert stopped == []
 
 
 def test_worker_rejects_legacy_search_task_without_start_or_report() -> None:
@@ -199,6 +197,29 @@ def test_worker_executes_doctor_list_task_without_old_start_or_report() -> None:
     assert executor.tasks[0][2] is device
 
 
+def test_home_feed_worker_does_not_auto_stop_business_after_iteration() -> None:
+    task = ClaimTaskResult(
+        has_task=True,
+        doctors=[ClaimTaskDoctorResult(doctor_id=31, doctor_name="doctor-a")],
+    )
+    api_client = FakeApiClient([task])
+    executor = RecordingExecutor(result=TaskExecutionResult.no_report())
+    worker = TaskWorker(
+        device=make_device(),
+        api_client=api_client,  # type: ignore[arg-type]
+        publish_account="account",
+        poll_interval_seconds=0,
+        executor=executor,
+        runtime_dir="runtime",
+        auto_stop_after_task=True,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed_task is True
+    assert api_client.auto_stop_requests == []
+
+
 def test_worker_run_once_returns_no_task_reason() -> None:
     api_client = FakeApiClient([ClaimTaskResult(has_task=False, reason="device_pool_empty")])
     worker = TaskWorker(
@@ -263,6 +284,7 @@ def test_worker_does_not_claim_outside_runtime_window() -> None:
         api_client=api_client,  # type: ignore[arg-type]
         publish_account="测试账号01",
         poll_interval_seconds=0,
+        outside_runtime_window_poll_seconds=0,
         executor=executor,
         runtime_dir="runtime",
         current_minute_provider=lambda: 18 * 60 + 1,
@@ -277,6 +299,43 @@ def test_worker_does_not_claim_outside_runtime_window() -> None:
     assert executor.tasks == []
 
 
+def test_worker_waits_five_minutes_outside_runtime_window(monkeypatch) -> None:
+    api_client = FakeApiClient([ClaimTaskResult(has_task=False)])
+    api_client.timing_settings = [
+        AutomationTimingSettingResult(
+            key="runtime_start_time",
+            label="运行开始时间",
+            min_seconds=8 * 60,
+            max_seconds=8 * 60,
+        ),
+        AutomationTimingSettingResult(
+            key="runtime_end_time",
+            label="运行结束时间",
+            min_seconds=18 * 60,
+            max_seconds=18 * 60,
+        ),
+    ]
+    waits = []
+    worker = TaskWorker(
+        device=make_device(),
+        api_client=api_client,  # type: ignore[arg-type]
+        publish_account="测试账号01",
+        poll_interval_seconds=1,
+        outside_runtime_window_poll_seconds=300,
+        executor=RecordingExecutor(),
+        runtime_dir="runtime",
+        current_minute_provider=lambda: 7 * 60,
+    )
+    monkeypatch.setattr(worker.stop_event, "wait", lambda seconds: waits.append(seconds))
+
+    result = worker.run_once()
+
+    assert result.claimed_task is False
+    assert result.no_task_reason == "outside_runtime_window"
+    assert api_client.claim_requests == []
+    assert waits == [300]
+
+
 def test_runtime_window_allows_specific_minutes_inside_cross_day_range() -> None:
     from app.task_worker import is_minute_in_runtime_window
 
@@ -284,6 +343,14 @@ def test_runtime_window_allows_specific_minutes_inside_cross_day_range() -> None
     assert is_minute_in_runtime_window(5 * 60 + 59, 22 * 60 + 30, 6 * 60)
     assert not is_minute_in_runtime_window(21 * 60 + 59, 22 * 60 + 30, 6 * 60)
     assert not is_minute_in_runtime_window(6 * 60, 22 * 60 + 30, 6 * 60)
+
+
+def test_runtime_window_allows_same_start_end_as_full_day() -> None:
+    from app.task_worker import is_minute_in_runtime_window
+
+    assert is_minute_in_runtime_window(0, 8 * 60, 8 * 60)
+    assert is_minute_in_runtime_window(12 * 60, 8 * 60, 8 * 60)
+    assert is_minute_in_runtime_window(23 * 60 + 59, 8 * 60, 8 * 60)
 
 
 def test_worker_does_not_claim_when_device_offline() -> None:

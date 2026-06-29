@@ -209,7 +209,16 @@ def test_executor_applies_backend_timing_settings() -> None:
     assert config.watch_max_seconds == 300
 
 
-def test_force_stop_douyin_waits_exit_interval_in_minutes(monkeypatch) -> None:
+def test_exit_interval_reached_uses_minutes(monkeypatch) -> None:
+    config = DouyinAppiumExecutorConfig(douyin_exit_interval_minutes=20)
+    executor = DouyinAppiumTaskExecutor(config=config)
+    args = executor._build_args(make_device())
+
+    assert not executor._exit_interval_reached(100.0, args, now=100.0 + 1199)
+    assert executor._exit_interval_reached(100.0, args, now=100.0 + 1200)
+
+
+def test_force_stop_douyin_marks_reopen_without_waiting_exit_interval(monkeypatch) -> None:
     config = DouyinAppiumExecutorConfig(douyin_exit_interval_minutes=20)
     executor = DouyinAppiumTaskExecutor(config=config)
     args = executor._build_args(make_device())
@@ -231,7 +240,32 @@ def test_force_stop_douyin_waits_exit_interval_in_minutes(monkeypatch) -> None:
     executor._force_stop_douyin(args)
 
     assert commands == [["adb", "-s", args.udid, "shell", "am", "force-stop", args.package_name]]
-    assert sleeps == [1200]
+    assert sleeps == []
+    assert executor._douyin_reopen_pending is True
+
+
+def test_restart_home_feed_cycle_force_stops_waits_and_reopens(monkeypatch) -> None:
+    config = DouyinAppiumExecutorConfig(
+        douyin_exit_interval_minutes=0,
+        douyin_reopen_interval_minutes=20,
+        after_open_seconds=0,
+    )
+    executor = DouyinAppiumTaskExecutor(config=config)
+    args = executor._build_args(make_device())
+    driver = FakeDriver([HOME_SOURCE])
+    calls = []
+
+    monkeypatch.setattr(executor, "_force_stop_douyin", lambda args: calls.append("force_stop"))
+    monkeypatch.setattr(
+        executor,
+        "_ensure_douyin_home_page",
+        lambda *, driver, actions, args: calls.append("home") or driver,
+    )
+
+    result_driver = executor._restart_home_feed_cycle(driver=driver, args=args)
+
+    assert result_driver is driver
+    assert calls == ["force_stop", "home"]
 
 
 def test_reopen_interval_waits_before_next_open_only_after_force_stop(monkeypatch) -> None:
@@ -475,7 +509,7 @@ def test_home_feed_task_watches_and_swipes_until_author_matches(monkeypatch) -> 
     executor = DouyinAppiumTaskExecutor(
         config=DouyinAppiumExecutorConfig(
             appium_server_url="http://127.0.0.1:4723",
-            max_swipes=3,
+            max_swipes=1,
         ),
         driver_factory=FakeDriverFactory(driver),  # type: ignore[arg-type]
     )

@@ -32,6 +32,7 @@ class TaskRunner:
         api_client: AutomationApiClient,
         publish_account_by_udid: dict[str, str],
         poll_interval_seconds: float,
+        outside_runtime_window_poll_seconds: float = 300,
         max_workers: int,
         executor: TaskExecutor | None = None,
         status_registry: DeviceStatusRegistry | None = None,
@@ -45,6 +46,7 @@ class TaskRunner:
         self.api_client = api_client
         self.publish_account_by_udid = publish_account_by_udid
         self.poll_interval_seconds = poll_interval_seconds
+        self.outside_runtime_window_poll_seconds = outside_runtime_window_poll_seconds
         self.max_workers = max_workers
         self.executor = executor
         self.status_registry = status_registry
@@ -93,6 +95,7 @@ class TaskRunner:
                 api_client=self.api_client,
                 publish_account=self.publish_account_by_udid.get(device.udid, device.name),
                 poll_interval_seconds=self.poll_interval_seconds,
+                outside_runtime_window_poll_seconds=self.outside_runtime_window_poll_seconds,
                 executor=self.executor,
                 stop_event=self.stop_event,
                 status_registry=self.status_registry,
@@ -128,6 +131,7 @@ class TaskRunner:
                     api_client=self.api_client,
                     publish_account=self.publish_account_by_udid.get(device.udid, device.name),
                     poll_interval_seconds=self.poll_interval_seconds,
+                    outside_runtime_window_poll_seconds=self.outside_runtime_window_poll_seconds,
                     executor=self.executor,
                     stop_event=threading.Event(),
                     status_registry=self.status_registry,
@@ -330,6 +334,7 @@ class TaskRunner:
             api_client=self.api_client,
             publish_account=self.publish_account_by_udid.get(device.udid, device.name),
             poll_interval_seconds=self.poll_interval_seconds,
+            outside_runtime_window_poll_seconds=self.outside_runtime_window_poll_seconds,
             executor=self.executor,
             stop_event=threading.Event(),
             status_registry=self.status_registry,

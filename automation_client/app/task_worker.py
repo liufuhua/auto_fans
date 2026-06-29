@@ -116,6 +116,7 @@ class TaskWorker:
         api_client: AutomationApiClient,
         publish_account: str,
         poll_interval_seconds: float,
+        outside_runtime_window_poll_seconds: float = 300,
         executor: TaskExecutor | None = None,
         stop_event: threading.Event | None = None,
         runtime_dir: str | Path = "runtime",
@@ -129,6 +130,7 @@ class TaskWorker:
         self.api_client = api_client
         self.publish_account = publish_account
         self.poll_interval_seconds = poll_interval_seconds
+        self.outside_runtime_window_poll_seconds = outside_runtime_window_poll_seconds
         self.executor = executor or NoopTaskExecutor()
         self.stop_event = stop_event or threading.Event()
         self.status_registry = status_registry
@@ -183,7 +185,7 @@ class TaskWorker:
                     self.device.name,
                     self.device.udid,
                 )
-                self._wait()
+                self._wait_outside_runtime_window()
                 return TaskWorkerRunResult(
                     claimed_task=False,
                     no_task_reason="outside_runtime_window",
@@ -213,8 +215,6 @@ class TaskWorker:
                     self.device.udid,
                     no_task_reason,
                 )
-                if self.auto_stop_after_task:
-                    self._auto_stop_business("no task available", force=False)
                 self._wait()
                 return TaskWorkerRunResult(
                     claimed_task=False,
@@ -266,8 +266,6 @@ class TaskWorker:
                     )
                 return TaskWorkerRunResult(claimed_task=True)
             finally:
-                if self.auto_stop_after_task:
-                    self._auto_stop_business("task iteration finished", force=True)
                 self._set_runtime_status_if_online("idle")
 
     def heartbeat(self, runtime_status: str) -> None:
@@ -284,6 +282,9 @@ class TaskWorker:
 
     def _wait(self) -> None:
         self.stop_event.wait(self.poll_interval_seconds)
+
+    def _wait_outside_runtime_window(self) -> None:
+        self.stop_event.wait(self.outside_runtime_window_poll_seconds)
 
     def _business_enabled(self) -> bool:
         if self.business_enabled is None:

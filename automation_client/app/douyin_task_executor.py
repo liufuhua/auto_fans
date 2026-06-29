@@ -248,6 +248,7 @@ class DouyinAppiumTaskExecutor:
                 actions=actions,
                 args=args,
             )
+            cycle_started_at = time.monotonic()
             for attempt in range(args.max_swipes + 1):
                 actions = self._build_actions(
                     driver=active_driver,
@@ -255,6 +256,14 @@ class DouyinAppiumTaskExecutor:
                     task_id=f"worker_home_feed_task_{attempt}",
                 )
                 self._watch_home_feed_video(args=args, waits=waits)
+                if self._exit_interval_reached(cycle_started_at, args):
+                    active_driver = self._restart_home_feed_cycle(
+                        driver=active_driver,
+                        args=args,
+                    )
+                    cycle_started_at = time.monotonic()
+                    continue
+
                 author_name = self._get_home_feed_video_author_name(active_driver)
                 matched_doctor = self._match_home_feed_doctor(task.doctors, author_name)
                 if matched_doctor is None:
@@ -283,6 +292,14 @@ class DouyinAppiumTaskExecutor:
                     author_name=author_name,
                     publish_account=publish_account,
                 )
+                if self._exit_interval_reached(cycle_started_at, args):
+                    active_driver = self._restart_home_feed_cycle(
+                        driver=active_driver,
+                        args=args,
+                    )
+                    cycle_started_at = time.monotonic()
+                    continue
+
                 active_driver = self._swipe_to_next_home_feed_video(
                     driver=active_driver,
                     actions=self._build_actions(
@@ -292,12 +309,34 @@ class DouyinAppiumTaskExecutor:
                     ),
                     args=args,
                 )
-                return TaskExecutionResult.no_report()
+                continue
 
             return TaskExecutionResult.no_report()
         finally:
             quit_with_timeout(active_driver, args.quit_timeout_seconds)
             self._clear_appium_session(args)
+
+    def _exit_interval_reached(
+        self,
+        cycle_started_at: float,
+        args: argparse.Namespace,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        interval_seconds = max(0, float(args.douyin_exit_interval_minutes) * 60)
+        if interval_seconds <= 0:
+            return False
+        current = time.monotonic() if now is None else now
+        return current - cycle_started_at >= interval_seconds
+
+    def _restart_home_feed_cycle(self, *, driver, args: argparse.Namespace):
+        self._force_stop_douyin(args)
+        actions = self._build_actions(
+            driver=driver,
+            args=args,
+            task_id="worker_home_feed_restart_cycle",
+        )
+        return self._ensure_douyin_home_page(driver=driver, actions=actions, args=args)
 
     def _watch_home_feed_video(
         self,
@@ -749,13 +788,6 @@ class DouyinAppiumTaskExecutor:
             raise RuntimeError(f"强制退出抖音失败：returnCode={result.returncode}")
         log_step("抖音已强制退出")
         self._douyin_reopen_pending = True
-        exit_interval_seconds = max(0, float(args.douyin_exit_interval_minutes) * 60)
-        if exit_interval_seconds > 0:
-            log_step(
-                "等待退出抖音时间："
-                f"{args.douyin_exit_interval_minutes:g} 分钟"
-            )
-            time.sleep(exit_interval_seconds)
 
     def _wait_before_reopen_douyin_if_needed(self, args: argparse.Namespace) -> None:
         if not self._douyin_reopen_pending:
