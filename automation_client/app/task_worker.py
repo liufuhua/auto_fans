@@ -83,6 +83,8 @@ class TaskExecutor(Protocol):
         start_result: StartTaskResult,
         device: BackendDeviceConfig,
         api_client: AutomationApiClient,
+        stop_event: threading.Event | None = None,
+        should_stop_business: Callable[[], bool] | None = None,
     ) -> TaskExecutionResult:
         pass
 
@@ -95,6 +97,8 @@ class NoopTaskExecutor:
         start_result: StartTaskResult,
         device: BackendDeviceConfig,
         api_client: AutomationApiClient,
+        stop_event: threading.Event | None = None,
+        should_stop_business: Callable[[], bool] | None = None,
     ) -> TaskExecutionResult:
         logger.info(
             "noop execute task: device=%s taskItemId=%s resultId=%s commentBankItemId=%s",
@@ -173,7 +177,7 @@ class TaskWorker:
             return TaskWorkerRunResult(
                 claimed_task=False,
                 no_task_reason="business_stopped",
-                should_stop_business=True,
+                should_stop_business=False,
             )
 
         self._set_runtime_status_if_online("idle")
@@ -207,7 +211,7 @@ class TaskWorker:
                 return TaskWorkerRunResult(claimed_task=False, no_task_reason="claim_error")
             if not task.has_task:
                 no_task_reason = task.reason or "no_task"
-                should_stop = no_task_reason in {"task_completed", "business_stopped"}
+                should_stop = no_task_reason == "task_completed"
                 self._set_runtime_status_if_online("idle")
                 logger.info(
                     "no task: device=%s udid=%s reason=%s",
@@ -358,6 +362,8 @@ class TaskWorker:
                 start_result=start_result,
                 device=self.device,
                 api_client=self.api_client,
+                stop_event=self.stop_event,
+                should_stop_business=lambda: not self._business_enabled(),
             )
         except Exception as exc:  # noqa: BLE001 - task failures must be reported to backend.
             logger.exception(

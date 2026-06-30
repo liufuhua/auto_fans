@@ -95,6 +95,10 @@ HOME_FEED_AUTHOR_NOISE_WORDS = {
 }
 
 
+class HomeFeedStopRequested(RuntimeError):
+    """Raised when the scheduler stop event interrupts the home-feed flow."""
+
+
 @dataclass(frozen=True)
 class DouyinAppiumExecutorConfig:
     appium_server_url: str = settings.appium_server_url
@@ -193,6 +197,8 @@ class DouyinAppiumTaskExecutor:
         start_result: StartTaskResult,
         device: BackendDeviceConfig,
         api_client: AutomationApiClient,
+        stop_event: threading.Event | None = None,
+        should_stop_business=None,
     ) -> TaskExecutionResult:
         if task.doctors:
             return self._execute_home_feed_task(
@@ -200,6 +206,8 @@ class DouyinAppiumTaskExecutor:
                 start_result=start_result,
                 device=device,
                 api_client=api_client,
+                stop_event=stop_event,
+                should_stop_business=should_stop_business,
             )
 
         raise RuntimeError("旧搜索任务格式已停用，客户端只支持首页流医生列表任务")
@@ -211,6 +219,8 @@ class DouyinAppiumTaskExecutor:
         start_result: StartTaskResult,
         device: BackendDeviceConfig,
         api_client: AutomationApiClient,
+        stop_event: threading.Event | None = None,
+        should_stop_business=None,
     ) -> TaskExecutionResult:
         if not task.doctors:
             raise RuntimeError("claimed home-feed task missing doctors")
@@ -219,7 +229,12 @@ class DouyinAppiumTaskExecutor:
             raise RuntimeError("claimed home-feed task missing publish account")
 
         active_config = self._config_with_backend_timing(api_client)
-        args = self._build_args(device, config=active_config)
+        args = self._build_args(
+            device,
+            config=active_config,
+            stop_event=stop_event,
+            should_stop_business=should_stop_business,
+        )
         app_path = str(Path(args.app).resolve()) if args.app else None
         appium_device = AppiumDeviceConfig(
             udid=device.udid,
@@ -252,14 +267,17 @@ class DouyinAppiumTaskExecutor:
                 actions=actions,
                 args=args,
             )
+            self._raise_if_stop_requested(args, "home-feed stopped before watching video")
             cycle_started_at = self._home_feed_cycle_started_at(args)
             for attempt in range(args.max_swipes + 1):
+                self._raise_if_stop_requested(args, "home-feed stopped before next video")
                 actions = self._build_actions(
                     driver=active_driver,
                     args=args,
                     task_id=f"worker_home_feed_task_{attempt}",
                 )
                 self._watch_home_feed_video(args=args, waits=waits)
+                self._raise_if_stop_requested(args, "home-feed stopped after watching video")
                 if self._exit_interval_reached(cycle_started_at, args):
                     active_driver = self._restart_home_feed_cycle(
                         driver=active_driver,
@@ -285,6 +303,10 @@ class DouyinAppiumTaskExecutor:
                     "home-feed author matched: "
                     f"author={author_name}, doctor={matched_doctor.doctor_name}"
                 )
+                self._raise_if_stop_requested(
+                    args,
+                    "home-feed stopped before claiming matched comment",
+                )
                 active_driver = self._execute_home_feed_matched_comment(
                     driver=active_driver,
                     actions=actions,
@@ -295,6 +317,10 @@ class DouyinAppiumTaskExecutor:
                     matched_doctor=matched_doctor,
                     author_name=author_name,
                     publish_account=publish_account,
+                )
+                self._raise_if_stop_requested(
+                    args,
+                    "home-feed stopped after matched comment report",
                 )
                 if self._exit_interval_reached(cycle_started_at, args):
                     active_driver = self._restart_home_feed_cycle(
@@ -316,9 +342,43 @@ class DouyinAppiumTaskExecutor:
                 continue
 
             return TaskExecutionResult.no_report()
+        except HomeFeedStopRequested as exc:
+            log_step(str(exc))
+            return TaskExecutionResult.no_report()
         finally:
+            if self._stop_requested(args):
+                log_step(
+                    "stop event detected, force stopping Douyin before executor cleanup"
+                )
+                try:
+                    self._force_stop_douyin(args)
+                except Exception as exc:
+                    log_step(f"force stop Douyin after stop event failed: {exc}")
+                finally:
+                    self._douyin_reopen_pending = False
             quit_with_timeout(active_driver, args.quit_timeout_seconds)
             self._clear_appium_session(args)
+
+    @staticmethod
+    def _stop_requested(args: argparse.Namespace) -> bool:
+        stop_event = getattr(args, "stop_event", None)
+        if stop_event is not None and stop_event.is_set():
+            return True
+        if bool(getattr(args, "business_stop_requested", False)):
+            return True
+        should_stop_business = getattr(args, "should_stop_business", None)
+        if callable(should_stop_business):
+            try:
+                if should_stop_business():
+                    setattr(args, "business_stop_requested", True)
+                    return True
+            except Exception as exc:  # noqa: BLE001 - failed polling should not break execution.
+                log_step(f"检查后台业务停止状态失败，继续当前流程：{exc}")
+        return False
+
+    def _raise_if_stop_requested(self, args: argparse.Namespace, message: str) -> None:
+        if self._stop_requested(args):
+            raise HomeFeedStopRequested(message)
 
     def _home_feed_cycle_started_at(
         self,
@@ -356,6 +416,11 @@ class DouyinAppiumTaskExecutor:
             f"udid={args.udid} elapsed=0s"
         )
         return current
+
+    def clear_home_feed_cycle_starts(self) -> None:
+        with self._home_feed_cycle_lock:
+            self._home_feed_cycle_started_by_udid.clear()
+        log_step("home-feed exit timers cleared after business stop")
 
     def _exit_interval_reached(
         self,
@@ -618,7 +683,10 @@ class DouyinAppiumTaskExecutor:
         args: argparse.Namespace,
     ):
         log_step("确保抖音已打开")
-        self._wait_before_reopen_douyin_if_needed(args)
+        if self._wait_before_reopen_douyin_if_needed(args):
+            raise HomeFeedStopRequested(
+                f"home-feed stopped before reopening Douyin: udid={args.udid}"
+            )
         actions.open_douyin()
         if args.after_open_seconds > 0:
             time.sleep(args.after_open_seconds)
@@ -838,9 +906,9 @@ class DouyinAppiumTaskExecutor:
         log_step("抖音已强制退出")
         self._douyin_reopen_pending = True
 
-    def _wait_before_reopen_douyin_if_needed(self, args: argparse.Namespace) -> None:
+    def _wait_before_reopen_douyin_if_needed(self, args: argparse.Namespace) -> bool:
         if not self._douyin_reopen_pending:
-            return
+            return False
         self._douyin_reopen_pending = False
         reopen_interval_seconds = max(0, float(args.douyin_reopen_interval_minutes) * 60)
         if reopen_interval_seconds > 0:
@@ -848,7 +916,17 @@ class DouyinAppiumTaskExecutor:
                 "等待重启抖音时间："
                 f"{args.douyin_reopen_interval_minutes:g} 分钟"
             )
-            time.sleep(reopen_interval_seconds)
+            stop_event = getattr(args, "stop_event", None)
+            if stop_event is not None:
+                if stop_event.wait(reopen_interval_seconds):
+                    log_step(
+                        "home-feed reopen wait interrupted by stop event: "
+                        f"udid={args.udid}"
+                    )
+                    return True
+            else:
+                time.sleep(reopen_interval_seconds)
+        return False
 
     def _like_video_and_reconnect(
         self,
@@ -1497,6 +1575,8 @@ class DouyinAppiumTaskExecutor:
         device: BackendDeviceConfig,
         *,
         config: DouyinAppiumExecutorConfig | None = None,
+        stop_event: threading.Event | None = None,
+        should_stop_business=None,
     ) -> argparse.Namespace:
         config = config or self.config
         return argparse.Namespace(
@@ -1543,5 +1623,8 @@ class DouyinAppiumTaskExecutor:
             allow_unverified_home_after_restart=config.allow_unverified_home_after_restart,
             wait_timeout_seconds=config.wait_timeout_seconds,
             quit_timeout_seconds=config.quit_timeout_seconds,
+            stop_event=stop_event,
+            should_stop_business=should_stop_business,
+            business_stop_requested=False,
             debug=False,
         )

@@ -56,15 +56,30 @@ class RecordingExecutor:
         self.result = result or TaskExecutionResult.success(video_link="https://v.douyin.com/test/")
         self.error = error
         self.cleanup_calls = []
+        self.clear_home_feed_cycle_starts_calls = 0
 
-    def execute(self, *, task, start_result, device, api_client):
-        self.tasks.append((task, start_result, device, api_client))
+    def execute(
+        self,
+        *,
+        task,
+        start_result,
+        device,
+        api_client,
+        stop_event=None,
+        should_stop_business=None,
+    ):
+        self.tasks.append(
+            (task, start_result, device, api_client, stop_event, should_stop_business)
+        )
         if self.error is not None:
             raise self.error
         return self.result
 
     def cleanup_after_report_failure(self, *, device, error):
         self.cleanup_calls.append((device, error))
+
+    def clear_home_feed_cycle_starts(self):
+        self.clear_home_feed_cycle_starts_calls += 1
 
 
 class FakeAppiumServerManager:
@@ -195,6 +210,7 @@ def test_worker_executes_doctor_list_task_without_old_start_or_report() -> None:
     assert executor.tasks[0][0].doctors == task.doctors
     assert executor.tasks[0][1] == StartTaskResult(result_id=0, status="home_feed")
     assert executor.tasks[0][2] is device
+    assert executor.tasks[0][4] is worker.stop_event
 
 
 def test_home_feed_worker_does_not_auto_stop_business_after_iteration() -> None:
@@ -253,13 +269,35 @@ def test_worker_does_not_claim_when_business_stopped() -> None:
         business_enabled=lambda: False,
     )
 
-    worker.run(max_iterations=1)
+    result = worker.run_once()
 
+    assert result.claimed_task is False
+    assert result.no_task_reason == "business_stopped"
+    assert result.should_stop_business is False
     assert registry.get_status("FMR0223830012928") == "idle"
     assert api_client.heartbeats == []
     assert api_client.claim_requests == []
     assert executor.tasks == []
     assert api_client.auto_stop_requests == []
+
+
+def test_worker_no_task_business_stopped_does_not_stop_scheduler() -> None:
+    api_client = FakeApiClient([ClaimTaskResult(has_task=False, reason="business_stopped")])
+    worker = TaskWorker(
+        device=make_device(),
+        api_client=api_client,  # type: ignore[arg-type]
+        publish_account="account",
+        poll_interval_seconds=0,
+        executor=RecordingExecutor(),
+        runtime_dir="runtime",
+        business_enabled=lambda: True,
+    )
+
+    result = worker.run_once()
+
+    assert result.claimed_task is False
+    assert result.no_task_reason == "business_stopped"
+    assert result.should_stop_business is False
 
 
 def test_worker_does_not_claim_outside_runtime_window() -> None:
@@ -409,7 +447,7 @@ def test_batched_runner_starts_and_stops_one_device_per_slot() -> None:
         max_workers=8,
         appium_server_manager=appium_manager,  # type: ignore[arg-type]
         appium_batch_size=2,
-        business_enabled=lambda: False,
+        business_enabled=lambda: True,
         run_results=[
             TaskWorkerRunResult(claimed_task=True),
             TaskWorkerRunResult(claimed_task=True),
@@ -629,6 +667,96 @@ def test_batched_runner_does_not_start_appium_outside_runtime_window(monkeypatch
     assert waits == [300]
     assert appium_manager.started == []
     assert runner.run_order == []
+
+
+def test_batched_runner_clears_home_feed_cycle_when_business_stopped(monkeypatch) -> None:
+    devices = [make_device(name="device_1", udid="udid-1")]
+    appium_manager = FakeAppiumServerManager()
+    executor = RecordingExecutor()
+    waits = []
+    runner = SequencedRunner(
+        devices=devices,
+        api_client=FakeApiClient([]),  # type: ignore[arg-type]
+        publish_account_by_udid={},
+        poll_interval_seconds=5,
+        max_workers=8,
+        executor=executor,
+        appium_server_manager=appium_manager,  # type: ignore[arg-type]
+        appium_batch_size=1,
+        business_enabled=lambda: False,
+        run_results=[TaskWorkerRunResult(claimed_task=True)],
+    )
+
+    def fake_wait(seconds):
+        waits.append(seconds)
+        runner.stop_event.set()
+        return True
+
+    monkeypatch.setattr(runner.stop_event, "wait", fake_wait)
+
+    runner._run_batched()
+
+    assert waits == [5]
+    assert appium_manager.started == []
+    assert executor.clear_home_feed_cycle_starts_calls == 1
+
+
+def test_batched_runner_does_not_submit_next_slot_after_business_stops() -> None:
+    devices = [make_device(name=f"device_{i}", udid=f"udid-{i}") for i in range(1, 3)]
+    appium_manager = FakeAppiumServerManager()
+    business_running = True
+
+    class StoppingRunner(SequencedRunner):
+        def _run_worker_once(self, device, auto_stop_after_task):
+            nonlocal business_running
+            result = super()._run_worker_once(device, auto_stop_after_task)
+            business_running = False
+            return result
+
+    runner = StoppingRunner(
+        devices=devices,
+        api_client=FakeApiClient([]),  # type: ignore[arg-type]
+        publish_account_by_udid={},
+        poll_interval_seconds=0,
+        max_workers=8,
+        appium_server_manager=appium_manager,  # type: ignore[arg-type]
+        appium_batch_size=1,
+        business_enabled=lambda: business_running,
+        run_results=[
+            TaskWorkerRunResult(claimed_task=True),
+            TaskWorkerRunResult(claimed_task=True),
+        ],
+    )
+
+    result = runner._run_device_round_once()
+
+    assert result.executed_any is True
+    assert appium_manager.started == [["udid-1"]]
+    assert runner.run_order == [("udid-1", False)]
+
+
+def test_batched_worker_receives_runner_stop_event() -> None:
+    task = ClaimTaskResult(
+        has_task=True,
+        doctors=[ClaimTaskDoctorResult(doctor_id=31, doctor_name="doctor-a")],
+    )
+    executor = RecordingExecutor(result=TaskExecutionResult.no_report())
+    runner = TaskRunner(
+        devices=[make_device()],
+        api_client=FakeApiClient([task]),  # type: ignore[arg-type]
+        publish_account_by_udid={},
+        poll_interval_seconds=0,
+        max_workers=1,
+        executor=executor,
+        appium_server_manager=FakeAppiumServerManager(),  # type: ignore[arg-type]
+        appium_batch_size=1,
+        business_enabled=lambda: True,
+    )
+
+    result = runner._run_worker_once(make_device(), False)
+
+    assert result.claimed_task is True
+    assert executor.tasks[0][4] is runner.stop_event
 
 
 def test_device_round_respects_effective_slots() -> None:

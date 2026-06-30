@@ -248,6 +248,16 @@ def test_home_feed_exit_cycle_timer_writes_observation_logs(monkeypatch) -> None
     ]
 
 
+def test_home_feed_exit_cycle_can_be_cleared_after_business_stop() -> None:
+    executor = DouyinAppiumTaskExecutor()
+    args = executor._build_args(make_device())
+
+    executor._home_feed_cycle_started_at(args, now=100.0)
+    executor.clear_home_feed_cycle_starts()
+
+    assert executor._home_feed_cycle_started_at(args, now=700.0) == 700.0
+
+
 def test_force_stop_douyin_marks_reopen_without_waiting_exit_interval(monkeypatch) -> None:
     config = DouyinAppiumExecutorConfig(douyin_exit_interval_minutes=20)
     executor = DouyinAppiumTaskExecutor(config=config)
@@ -332,6 +342,37 @@ def test_reopen_interval_waits_before_next_open_only_after_force_stop(monkeypatc
     executor._ensure_douyin_home_page(driver=driver, actions=actions, args=args)
 
     assert sleeps == [1200]
+
+
+def test_reopen_interval_can_be_interrupted_by_stop_event(monkeypatch) -> None:
+    config = DouyinAppiumExecutorConfig(
+        after_open_seconds=0,
+        douyin_reopen_interval_minutes=5,
+    )
+    executor = DouyinAppiumTaskExecutor(config=config)
+    args = executor._build_args(make_device())
+    waits = []
+
+    class StopEvent:
+        def wait(self, seconds):
+            waits.append(seconds)
+            return True
+
+        def is_set(self):
+            return True
+
+    args.stop_event = StopEvent()
+    executor._douyin_reopen_pending = True
+    monkeypatch.setattr(
+        "app.douyin_task_executor.time.sleep",
+        lambda seconds: (_ for _ in ()).throw(AssertionError("used blocking sleep")),
+    )
+
+    interrupted = executor._wait_before_reopen_douyin_if_needed(args)
+
+    assert interrupted is True
+    assert waits == [300]
+    assert executor._douyin_reopen_pending is False
 
 
 def test_executor_shell_script_command_uses_script_directly_on_unix(monkeypatch) -> None:
@@ -578,6 +619,107 @@ def test_home_feed_task_watches_and_swipes_until_author_matches(monkeypatch) -> 
 
     assert result.report_to_backend is False
     assert calls == ["watch", "swipe", "watch", ("matched", 31), "swipe"]
+
+
+def test_home_feed_task_force_stops_douyin_when_stop_requested(monkeypatch) -> None:
+    driver = FakeDriver([HOME_SOURCE])
+    executor = DouyinAppiumTaskExecutor(
+        config=DouyinAppiumExecutorConfig(
+            appium_server_url="http://127.0.0.1:4723",
+            max_swipes=0,
+        ),
+        driver_factory=FakeDriverFactory(driver),  # type: ignore[arg-type]
+    )
+    api_client = FakeHomeFeedApiClient()
+    task = ClaimTaskResult(
+        has_task=True,
+        publish_account="account-1",
+        doctors=[ClaimTaskDoctorResult(doctor_id=31, doctor_name="Doctor Gao")],
+    )
+    stop_event = __import__("threading").Event()
+    stop_event.set()
+    force_stop_calls = []
+    clear_calls = []
+
+    monkeypatch.setattr(executor, "_configure_driver", lambda driver: None)
+    monkeypatch.setattr(executor, "_ensure_douyin_home_page", lambda **kwargs: kwargs["driver"])
+    monkeypatch.setattr(executor, "_watch_home_feed_video", lambda *, args, waits: None)
+    monkeypatch.setattr(executor, "_get_home_feed_video_author_name", lambda driver: "Other Author")
+    monkeypatch.setattr(
+        executor,
+        "_force_stop_douyin",
+        lambda args: force_stop_calls.append(args) or setattr(executor, "_douyin_reopen_pending", True),
+    )
+    monkeypatch.setattr("app.douyin_task_executor.quit_with_timeout", lambda driver, timeout: None)
+    monkeypatch.setattr(executor, "_clear_appium_session", lambda args: clear_calls.append(args))
+
+    result = executor.execute(
+        task=task,
+        start_result=StartTaskResult(result_id=0, status="home_feed"),
+        device=make_device(),
+        api_client=api_client,  # type: ignore[arg-type]
+        stop_event=stop_event,
+    )
+
+    assert result.report_to_backend is False
+    assert len(force_stop_calls) == 1
+    assert len(clear_calls) == 1
+    assert executor._douyin_reopen_pending is False
+
+
+def test_home_feed_task_force_stops_when_backend_business_stops_after_report(monkeypatch) -> None:
+    driver = FakeDriver([HOME_SOURCE])
+    executor = DouyinAppiumTaskExecutor(
+        config=DouyinAppiumExecutorConfig(
+            appium_server_url="http://127.0.0.1:4723",
+            max_swipes=0,
+        ),
+        driver_factory=FakeDriverFactory(driver),  # type: ignore[arg-type]
+    )
+    api_client = FakeHomeFeedApiClient()
+    task = ClaimTaskResult(
+        has_task=True,
+        publish_account="account-1",
+        doctors=[ClaimTaskDoctorResult(doctor_id=31, doctor_name="Doctor Gao")],
+    )
+    calls = []
+    force_stop_calls = []
+    should_stop_checks = iter([False, False, False, False, True])
+
+    monkeypatch.setattr(executor, "_configure_driver", lambda driver: None)
+    monkeypatch.setattr(executor, "_ensure_douyin_home_page", lambda **kwargs: calls.append("home") or kwargs["driver"])
+    monkeypatch.setattr(executor, "_watch_home_feed_video", lambda *, args, waits: calls.append("watch"))
+    monkeypatch.setattr(executor, "_get_home_feed_video_author_name", lambda driver: "Clinic Doctor Gao")
+    monkeypatch.setattr(
+        executor,
+        "_execute_home_feed_matched_comment",
+        lambda **kwargs: calls.append("matched") or driver,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_swipe_to_next_home_feed_video",
+        lambda *, driver, actions, args: calls.append("swipe") or driver,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_force_stop_douyin",
+        lambda args: force_stop_calls.append(args) or setattr(executor, "_douyin_reopen_pending", True),
+    )
+    monkeypatch.setattr("app.douyin_task_executor.quit_with_timeout", lambda driver, timeout: None)
+    monkeypatch.setattr(executor, "_clear_appium_session", lambda args: None)
+
+    result = executor.execute(
+        task=task,
+        start_result=StartTaskResult(result_id=0, status="home_feed"),
+        device=make_device(),
+        api_client=api_client,  # type: ignore[arg-type]
+        should_stop_business=lambda: next(should_stop_checks),
+    )
+
+    assert result.report_to_backend is False
+    assert calls == ["home", "watch", "matched"]
+    assert len(force_stop_calls) == 1
+    assert executor._douyin_reopen_pending is False
 
 
 def test_home_feed_author_candidates_prefer_title_resource_id() -> None:

@@ -157,6 +157,7 @@ class TaskRunner:
         while not self.stop_event.is_set():
             if not self._business_enabled():
                 self._set_idle_for_online_devices()
+                self._clear_executor_home_feed_cycle_starts()
                 self.stop_event.wait(self.poll_interval_seconds)
                 continue
 
@@ -231,6 +232,7 @@ class TaskRunner:
             running_udids: set[str] = set()
             exhausted_udids: set[str] = set()
             next_device_index = 0
+            submitting_initial_slots = True
 
             def next_available_device() -> BackendDeviceConfig | None:
                 nonlocal next_device_index
@@ -254,6 +256,8 @@ class TaskRunner:
             def submit_next() -> None:
                 if self.stop_event.is_set() or should_stop:
                     return
+                if not submitting_initial_slots and not self._business_enabled():
+                    return
                 next_device = next_available_device()
                 if next_device is None:
                     return
@@ -262,6 +266,7 @@ class TaskRunner:
 
             for _ in range(worker_count):
                 submit_next()
+            submitting_initial_slots = False
 
             while futures and not self.stop_event.is_set():
                 done_futures, _pending_futures = wait(
@@ -356,7 +361,7 @@ class TaskRunner:
             poll_interval_seconds=self.poll_interval_seconds,
             outside_runtime_window_poll_seconds=self.outside_runtime_window_poll_seconds,
             executor=self.executor,
-            stop_event=threading.Event(),
+            stop_event=self.stop_event,
             status_registry=self.status_registry,
             business_enabled=self.business_enabled,
             business_stopped=self.business_stopped,
@@ -382,6 +387,11 @@ class TaskRunner:
         if callable(self.business_enabled):
             return bool(self.business_enabled())
         return bool(self.business_enabled)
+
+    def _clear_executor_home_feed_cycle_starts(self) -> None:
+        reset = getattr(self.executor, "clear_home_feed_cycle_starts", None)
+        if callable(reset):
+            reset()
 
     def _runtime_window_allows_device_round(self) -> bool:
         try:

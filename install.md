@@ -99,7 +99,7 @@ cd E:\auto_fans\automation_client
 
 ```powershell
 cd E:\auto_fans\automation_client
-.\.venv\Scripts\python.exe -m app.main --api-base-url http://127.0.0.1:8000/api --appium-server-url http://127.0.0.1:4723 --adb-path adb --manage-appium-servers --appium-batch-size 2
+.\.venv\Scripts\python.exe -m app.main --api-base-url http://127.0.0.1:8000/api --appium-server-url http://127.0.0.1:4723 --adb-path adb --manage-appium-servers --appium-batch-size 30
 ```
 
 本地单轮调试某台设备：
