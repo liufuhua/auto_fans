@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
@@ -181,6 +183,8 @@ class DouyinAppiumTaskExecutor:
         )
         self._latest_actions: DouyinActions | None = None
         self._douyin_reopen_pending = False
+        self._home_feed_cycle_started_by_udid: dict[str, float] = {}
+        self._home_feed_cycle_lock = threading.Lock()
 
     def execute(
         self,
@@ -248,7 +252,7 @@ class DouyinAppiumTaskExecutor:
                 actions=actions,
                 args=args,
             )
-            cycle_started_at = time.monotonic()
+            cycle_started_at = self._home_feed_cycle_started_at(args)
             for attempt in range(args.max_swipes + 1):
                 actions = self._build_actions(
                     driver=active_driver,
@@ -261,7 +265,7 @@ class DouyinAppiumTaskExecutor:
                         driver=active_driver,
                         args=args,
                     )
-                    cycle_started_at = time.monotonic()
+                    cycle_started_at = self._reset_home_feed_cycle_start(args)
                     continue
 
                 author_name = self._get_home_feed_video_author_name(active_driver)
@@ -297,7 +301,7 @@ class DouyinAppiumTaskExecutor:
                         driver=active_driver,
                         args=args,
                     )
-                    cycle_started_at = time.monotonic()
+                    cycle_started_at = self._reset_home_feed_cycle_start(args)
                     continue
 
                 active_driver = self._swipe_to_next_home_feed_video(
@@ -316,6 +320,43 @@ class DouyinAppiumTaskExecutor:
             quit_with_timeout(active_driver, args.quit_timeout_seconds)
             self._clear_appium_session(args)
 
+    def _home_feed_cycle_started_at(
+        self,
+        args: argparse.Namespace,
+        *,
+        now: float | None = None,
+    ) -> float:
+        current = time.monotonic() if now is None else now
+        with self._home_feed_cycle_lock:
+            started_at = self._home_feed_cycle_started_by_udid.get(args.udid)
+            if started_at is None:
+                self._home_feed_cycle_started_by_udid[args.udid] = current
+                log_step(
+                    f"home-feed exit timer started: udid={args.udid} elapsed=0s"
+                )
+                return current
+        elapsed_seconds = int(current - started_at)
+        log_step(
+            f"home-feed exit timer reused: udid={args.udid} "
+            f"elapsed={elapsed_seconds}s"
+        )
+        return started_at
+
+    def _reset_home_feed_cycle_start(
+        self,
+        args: argparse.Namespace,
+        *,
+        now: float | None = None,
+    ) -> float:
+        current = time.monotonic() if now is None else now
+        with self._home_feed_cycle_lock:
+            self._home_feed_cycle_started_by_udid[args.udid] = current
+        log_step(
+            "home-feed exit timer reset after Douyin restart: "
+            f"udid={args.udid} elapsed=0s"
+        )
+        return current
+
     def _exit_interval_reached(
         self,
         cycle_started_at: float,
@@ -327,7 +368,15 @@ class DouyinAppiumTaskExecutor:
         if interval_seconds <= 0:
             return False
         current = time.monotonic() if now is None else now
-        return current - cycle_started_at >= interval_seconds
+        elapsed_seconds = current - cycle_started_at
+        reached = elapsed_seconds >= interval_seconds
+        if reached:
+            log_step(
+                "home-feed exit interval reached: "
+                f"udid={args.udid} elapsed={int(elapsed_seconds)}s "
+                f"interval={int(interval_seconds)}s"
+            )
+        return reached
 
     def _restart_home_feed_cycle(self, *, driver, args: argparse.Namespace):
         self._force_stop_douyin(args)

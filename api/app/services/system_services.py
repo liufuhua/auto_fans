@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess
 from datetime import datetime
@@ -15,7 +16,7 @@ from app.models.device import Device
 
 DEFAULT_HOST = "127.0.0.1"
 SERVICE_PORTS = {
-    "api": 8000,
+    "api": int(os.getenv("API_PORT", "8000")),
     "web": 5173,
     "appium": 4723,
 }
@@ -151,7 +152,25 @@ def _summarize_appium_servers(
     }
 
 
-def _find_windows_process(pattern: str) -> tuple[int | None, str]:
+def _process_matches(
+    *,
+    name: str,
+    command_line: str,
+    required_substrings: tuple[str, ...],
+    ignored_substrings: tuple[str, ...] = (),
+) -> bool:
+    if not command_line:
+        return False
+    lowered_command = command_line.lower()
+    lowered_name = name.lower()
+    if lowered_name.startswith(("powershell", "pwsh")):
+        return False
+    if any(item.lower() in lowered_command for item in ignored_substrings):
+        return False
+    return all(item.lower() in lowered_command for item in required_substrings)
+
+
+def _find_windows_process(required_substrings: tuple[str, ...]) -> tuple[int | None, str]:
     command = [
         "powershell",
         "-NoProfile",
@@ -160,10 +179,7 @@ def _find_windows_process(pattern: str) -> tuple[int | None, str]:
         "-Command",
         (
             "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | "
-            f"Where-Object {{ $_.CommandLine -like '{pattern}' "
-            "-and $_.CommandLine -notlike '*Get-CimInstance Win32_Process*' "
-            "-and $_.Name -notlike 'powershell*' }} | "
-            "Select-Object -First 1 ProcessId,CommandLine | ConvertTo-Json -Compress"
+            "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"
         ),
     ]
     try:
@@ -185,11 +201,21 @@ def _find_windows_process(pattern: str) -> tuple[int | None, str]:
         data = json.loads(output)
     except json.JSONDecodeError:
         return None, output
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    pid = data.get("ProcessId")
-    command_line = data.get("CommandLine") or ""
-    return int(pid) if pid else None, command_line
+    items = data if isinstance(data, list) else [data]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        command_line = item.get("CommandLine") or ""
+        if not _process_matches(
+            name=item.get("Name") or "",
+            command_line=command_line,
+            required_substrings=required_substrings,
+            ignored_substrings=("Get-CimInstance Win32_Process", "app.services.system_services"),
+        ):
+            continue
+        pid = item.get("ProcessId")
+        return int(pid) if pid else None, command_line
+    return None, ""
 
 
 def _recent_client_log(max_age_seconds: int = 90) -> Path | None:
@@ -231,15 +257,10 @@ def get_service_status(db: Session | None = None) -> dict[str, object]:
         appium_servers = _appium_servers_from_devices(db) or _default_appium_servers()
     services["appium"] = _summarize_appium_servers(appium_servers, on_demand=on_demand)
 
-    pid, detail = _find_windows_process("*automation_client*app.main*")
-    if not pid:
-        recent_log = _recent_client_log()
-        if recent_log:
-            pid = None
-            detail = f"recent log activity: {recent_log}"
+    pid, detail = _find_windows_process(("automation_client", ".venv", "-m app.main"))
     services["client"] = {
         "name": "client",
-        "status": "running" if pid or detail.startswith("recent log activity:") else "stopped",
+        "status": "running" if pid else "stopped",
         "host": None,
         "port": None,
         "pid": pid,

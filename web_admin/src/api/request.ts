@@ -1,8 +1,8 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 
-const TOKEN_KEY = 'douyin_auto_admin_token'
-const USER_KEY = 'douyin_auto_admin_user'
+const TOKEN_KEY = 'auto_fans_admin_token'
+const USER_KEY = 'auto_fans_admin_user'
 
 type ApiResponse<T = unknown> = {
   code: string

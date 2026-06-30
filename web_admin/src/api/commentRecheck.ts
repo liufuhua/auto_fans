@@ -13,7 +13,7 @@ import { API_ENDPOINTS } from './endpoints'
 import { request } from './request'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const RECHECK_KEY = 'douyin_auto_mock_comment_recheck'
+const RECHECK_KEY = 'auto_fans_mock_comment_recheck'
 const PLAYWRIGHT_REQUEST_TIMEOUT = 120000
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))

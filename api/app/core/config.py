@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     environment: str = "local"
     debug: bool = True
 
-    database_url: str = "mysql+pymysql://root:yxylfh9986@127.0.0.1:3306/douyin_auto?charset=utf8mb4"
+    database_url: str = "mysql+pymysql://root:yxylfh9986@127.0.0.1:3306/auto_fans?charset=utf8mb4"
 
     jwt_secret_key: str = "change-me-in-local-env"
     jwt_algorithm: str = "HS256"

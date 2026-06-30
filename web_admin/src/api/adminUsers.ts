@@ -11,7 +11,7 @@ import { API_ENDPOINTS } from './endpoints'
 import { request } from './request'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const MOCK_KEY = 'douyin_auto_mock_admin_users'
+const MOCK_KEY = 'auto_fans_mock_admin_users'
 
 const now = () => new Date().toISOString()
 

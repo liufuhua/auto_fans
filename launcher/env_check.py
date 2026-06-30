@@ -85,6 +85,10 @@ def build_runtime_env() -> dict[str, str]:
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("LANG", "C.UTF-8")
     env.setdefault("LC_ALL", "C.UTF-8")
+    api_host = env.get("API_HOST", "127.0.0.1")
+    if not env.get("API_PORT"):
+        env["API_PORT"] = str(find_available_port(DEFAULT_PORTS["api"], host=api_host))
+    env.setdefault("VITE_API_BASE_URL", f"http://{api_host}:{env['API_PORT']}/api")
     entries = extra_path_entries()
     if entries:
         env["PATH"] = os.pathsep.join(entries + [env.get("PATH", "")])
@@ -145,6 +149,13 @@ def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         return sock.connect_ex((host, port)) == 0
+
+
+def find_available_port(default_port: int, *, host: str = "127.0.0.1") -> int:
+    for port in range(default_port, default_port + 20):
+        if not is_port_open(host, port):
+            return port
+    return default_port
 
 
 def check_project_root(root: Path) -> list[str]:

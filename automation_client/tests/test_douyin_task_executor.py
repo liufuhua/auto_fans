@@ -218,6 +218,36 @@ def test_exit_interval_reached_uses_minutes(monkeypatch) -> None:
     assert executor._exit_interval_reached(100.0, args, now=100.0 + 1200)
 
 
+def test_home_feed_exit_cycle_start_persists_between_short_slots() -> None:
+    executor = DouyinAppiumTaskExecutor()
+    args = executor._build_args(make_device())
+
+    assert executor._home_feed_cycle_started_at(args, now=100.0) == 100.0
+    assert executor._home_feed_cycle_started_at(args, now=250.0) == 100.0
+
+    executor._reset_home_feed_cycle_start(args, now=400.0)
+
+    assert executor._home_feed_cycle_started_at(args, now=450.0) == 400.0
+
+
+def test_home_feed_exit_cycle_timer_writes_observation_logs(monkeypatch) -> None:
+    executor = DouyinAppiumTaskExecutor()
+    args = executor._build_args(make_device())
+    logs = []
+
+    monkeypatch.setattr("app.douyin_task_executor.log_step", logs.append)
+
+    executor._home_feed_cycle_started_at(args, now=100.0)
+    executor._home_feed_cycle_started_at(args, now=250.0)
+    executor._reset_home_feed_cycle_start(args, now=400.0)
+
+    assert logs == [
+        "home-feed exit timer started: udid=R5CW11CKN0B elapsed=0s",
+        "home-feed exit timer reused: udid=R5CW11CKN0B elapsed=150s",
+        "home-feed exit timer reset after Douyin restart: udid=R5CW11CKN0B elapsed=0s",
+    ]
+
+
 def test_force_stop_douyin_marks_reopen_without_waiting_exit_interval(monkeypatch) -> None:
     config = DouyinAppiumExecutorConfig(douyin_exit_interval_minutes=20)
     executor = DouyinAppiumTaskExecutor(config=config)

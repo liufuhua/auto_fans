@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import msvcrt
 import argparse
+import os
 import subprocess
 import sys
 import threading
@@ -32,6 +33,7 @@ class Launcher:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_path = self.log_dir / f"start_{stamp}.log"
         self.process: subprocess.Popen[str] | None = None
+        self.runtime_env: dict[str, str] | None = None
         self.restart_count = 0
         self.web_opened = False
         self.started_at = 0.0
@@ -58,6 +60,10 @@ class Launcher:
 
     def start_services(self) -> None:
         script = self.root / "scripts" / "start_all.ps1"
+        self.runtime_env = build_runtime_env()
+        for key in ("API_HOST", "API_PORT", "WEB_HOST", "WEB_PORT", "APPIUM_HOST", "APPIUM_PORT", "VITE_API_BASE_URL"):
+            if key in self.runtime_env:
+                os.environ[key] = self.runtime_env[key]
         command = [
             "powershell",
             "-NoProfile",
@@ -67,10 +73,11 @@ class Launcher:
             str(script),
         ]
         self.log(f"Starting services via: {' '.join(command)}")
+        self.log(f"Runtime API: {self.runtime_env.get('VITE_API_BASE_URL', '-')}")
         self.process = subprocess.Popen(
             command,
             cwd=str(self.root),
-            env=build_runtime_env(),
+            env=self.runtime_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -132,9 +139,12 @@ class Launcher:
         if isinstance(services, dict):
             web = services.get("web", {})
             if isinstance(web, dict) and web.get("status") == "running":
-                webbrowser.open("http://127.0.0.1:5173")
+                web_host = os.environ.get("WEB_HOST", "127.0.0.1")
+                web_port = os.environ.get("WEB_PORT", "5173")
+                web_url = f"http://{web_host}:{web_port}"
+                webbrowser.open(web_url)
                 self.web_opened = True
-                self.log("Opened web admin: http://127.0.0.1:5173")
+                self.log(f"Opened web admin: {web_url}")
 
     def read_command(self) -> str | None:
         try:

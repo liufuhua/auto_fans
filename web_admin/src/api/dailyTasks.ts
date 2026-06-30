@@ -14,7 +14,7 @@ import type {
 } from '../types/dailyTask'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const DAILY_TASK_KEY = 'douyin_auto_mock_daily_tasks'
+const DAILY_TASK_KEY = 'auto_fans_mock_daily_tasks'
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 const now = () => new Date().toISOString()

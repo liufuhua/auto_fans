@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess
 from dataclasses import asdict, dataclass
@@ -9,11 +10,19 @@ from pathlib import Path
 
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORTS = {
-    "api": 8000,
-    "web": 5173,
-    "appium": 4723,
-}
+def env_port(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value and raw_value.isdigit():
+        return int(raw_value)
+    return default
+
+
+def default_ports() -> dict[str, int]:
+    return {
+        "api": env_port("API_PORT", 8000),
+        "web": env_port("WEB_PORT", 5173),
+        "appium": env_port("APPIUM_PORT", 4723),
+    }
 APPIUM_PORTS_FILE = Path("logs") / "appium_ports.txt"
 APPIUM_ON_DEMAND_FILE = Path("logs") / "appium_on_demand.txt"
 
@@ -56,7 +65,7 @@ def load_appium_ports(root: Path | None = None) -> list[int]:
             port = int(line)
             if port not in ports:
                 ports.append(port)
-    return sorted(ports) or [DEFAULT_PORTS["appium"]]
+    return sorted(ports) or [default_ports()["appium"]]
 
 
 def appium_on_demand_enabled(root: Path | None = None) -> bool:
@@ -95,7 +104,25 @@ def summarize_appium_servers(
     }
 
 
-def find_windows_process(pattern: str) -> tuple[int | None, str]:
+def process_matches(
+    *,
+    name: str,
+    command_line: str,
+    required_substrings: tuple[str, ...],
+    ignored_substrings: tuple[str, ...] = (),
+) -> bool:
+    if not command_line:
+        return False
+    lowered_command = command_line.lower()
+    lowered_name = name.lower()
+    if lowered_name.startswith(("powershell", "pwsh")):
+        return False
+    if any(item.lower() in lowered_command for item in ignored_substrings):
+        return False
+    return all(item.lower() in lowered_command for item in required_substrings)
+
+
+def find_windows_process(required_substrings: tuple[str, ...]) -> tuple[int | None, str]:
     command = [
         "powershell",
         "-NoProfile",
@@ -104,10 +131,7 @@ def find_windows_process(pattern: str) -> tuple[int | None, str]:
         "-Command",
         (
             "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | "
-            f"Where-Object {{ $_.CommandLine -like '{pattern}' "
-            "-and $_.CommandLine -notlike '*Get-CimInstance Win32_Process*' "
-            "-and $_.Name -notlike 'powershell*' }} | "
-            "Select-Object -First 1 ProcessId,CommandLine | ConvertTo-Json -Compress"
+            "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"
         ),
     ]
     try:
@@ -129,11 +153,21 @@ def find_windows_process(pattern: str) -> tuple[int | None, str]:
         data = json.loads(output)
     except json.JSONDecodeError:
         return None, output
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    pid = data.get("ProcessId")
-    cmd = data.get("CommandLine") or ""
-    return int(pid) if pid else None, cmd
+    items = data if isinstance(data, list) else [data]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        command_line = item.get("CommandLine") or ""
+        if not process_matches(
+            name=item.get("Name") or "",
+            command_line=command_line,
+            required_substrings=required_substrings,
+            ignored_substrings=("Get-CimInstance Win32_Process", "service_status"),
+        ):
+            continue
+        pid = item.get("ProcessId")
+        return int(pid) if pid else None, command_line
+    return None, ""
 
 
 def recent_client_log(root: Path | None = None, max_age_seconds: int = 90) -> Path | None:
@@ -154,15 +188,7 @@ def recent_client_log(root: Path | None = None, max_age_seconds: int = 90) -> Pa
 
 
 def check_client_process(root: Path | None = None) -> ServiceInfo:
-    pid, detail = find_windows_process("*automation_client*app.main*")
-    if not pid:
-        recent_log = recent_client_log(root)
-        if recent_log:
-            return ServiceInfo(
-                name="client",
-                status="running",
-                detail=f"recent log activity: {recent_log}",
-            )
+    pid, detail = find_windows_process(("automation_client", ".venv", "-m app.main"))
     return ServiceInfo(
         name="client",
         status="running" if pid else "stopped",
@@ -174,7 +200,7 @@ def check_client_process(root: Path | None = None) -> ServiceInfo:
 def collect_status(root: Path | None = None) -> dict[str, object]:
     services = {
         name: asdict(check_port_service(name, port))
-        for name, port in DEFAULT_PORTS.items()
+        for name, port in default_ports().items()
         if name != "appium"
     }
     on_demand = appium_on_demand_enabled(root)

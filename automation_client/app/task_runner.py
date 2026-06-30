@@ -6,12 +6,19 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Callable
 
 from app.api_client import AutomationApiClient
 from app.appium_server_manager import AppiumServerManager
 from app.device_manager import BackendDeviceConfig
 from app.device_status import DeviceStatusRegistry
-from app.task_worker import TaskExecutor, TaskWorker, TaskWorkerRunResult
+from app.task_worker import (
+    TaskExecutor,
+    TaskWorker,
+    TaskWorkerRunResult,
+    _single_timing_value,
+    is_minute_in_runtime_window,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,7 @@ class TaskRunner:
         appium_server_manager: AppiumServerManager | None = None,
         appium_batch_size: int = 0,
         execution_order_log_path: str | Path | None = None,
+        current_minute_provider: Callable[[], int] | None = None,
     ) -> None:
         self.devices = devices
         self.api_client = api_client
@@ -54,6 +62,9 @@ class TaskRunner:
         self.business_stopped = business_stopped
         self.appium_server_manager = appium_server_manager
         self.appium_batch_size = appium_batch_size
+        self.current_minute_provider = current_minute_provider or (
+            lambda: datetime.now().hour * 60 + datetime.now().minute
+        )
         self.stop_event = threading.Event()
         self._pool: ThreadPoolExecutor | None = None
         self._futures: list[Future[None]] = []
@@ -147,6 +158,15 @@ class TaskRunner:
             if not self._business_enabled():
                 self._set_idle_for_online_devices()
                 self.stop_event.wait(self.poll_interval_seconds)
+                continue
+
+            if not self._runtime_window_allows_device_round():
+                self._set_idle_for_online_devices()
+                logger.info(
+                    "outside runtime window, skip device round; waiting %s seconds",
+                    self.outside_runtime_window_poll_seconds,
+                )
+                self.stop_event.wait(self.outside_runtime_window_poll_seconds)
                 continue
 
             try:
@@ -362,6 +382,21 @@ class TaskRunner:
         if callable(self.business_enabled):
             return bool(self.business_enabled())
         return bool(self.business_enabled)
+
+    def _runtime_window_allows_device_round(self) -> bool:
+        try:
+            settings = self.api_client.list_timing_settings()
+        except Exception as exc:  # noqa: BLE001 - timing lookup failure should not stop runner.
+            logger.warning("failed to fetch runtime window settings before device round: error=%s", exc)
+            return True
+
+        start_minute = _single_timing_value(settings, "runtime_start_time", 0)
+        end_minute = _single_timing_value(settings, "runtime_end_time", 23 * 60)
+        return is_minute_in_runtime_window(
+            self.current_minute_provider(),
+            start_minute,
+            end_minute,
+        )
 
     def _online_devices(self, devices: list[BackendDeviceConfig]) -> list[BackendDeviceConfig]:
         if self.status_registry is None:

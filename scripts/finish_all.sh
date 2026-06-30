@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$ROOT_DIR/logs"
 PID_FILE="${START_ALL_PID_FILE:-$LOG_DIR/start_all.pids}"
+ENV_FILE="${START_ALL_ENV_FILE:-$LOG_DIR/start_all.env}"
+
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+fi
 
 API_PORT="${API_PORT:-8000}"
 WEB_PORT="${WEB_PORT:-5173}"
@@ -130,6 +136,7 @@ remove_appium_ports_file() {
   if [[ "$DRY_RUN" != "1" ]]; then
     rm -f "$APPIUM_PORTS_FILE"
     rm -f "$APPIUM_ON_DEMAND_FILE"
+    rm -f "$ENV_FILE"
   fi
 }
 
@@ -180,11 +187,13 @@ stop_windows_command_patterns() {
     return 0
   fi
 
-  log "checking Windows command lines for automation_client"
+  log "checking Windows command lines for automation_client and appium"
   DRY_RUN="$DRY_RUN" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
     $patterns = @(
       "*automation_client*app.main*",
-      "*automation_client*win_test.py*"
+      "*automation_client*win_test.py*",
+      "*node*appium*index.js*--port*",
+      "*appium.CMD*--port*"
     )
     $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
       Where-Object {

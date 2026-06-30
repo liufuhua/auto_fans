@@ -8,7 +8,7 @@ import { API_ENDPOINTS } from './endpoints'
 import { request } from './request'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const RESULT_KEY = 'douyin_auto_mock_automation_results'
+const RESULT_KEY = 'auto_fans_mock_automation_results'
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 

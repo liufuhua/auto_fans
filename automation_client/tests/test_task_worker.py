@@ -584,6 +584,53 @@ def test_batched_runner_waits_when_full_round_claims_no_task(monkeypatch) -> Non
     assert appium_manager.started == [["udid-1"], ["udid-2"]]
 
 
+def test_batched_runner_does_not_start_appium_outside_runtime_window(monkeypatch) -> None:
+    devices = [make_device(name="device_1", udid="udid-1")]
+    api_client = FakeApiClient([])
+    api_client.timing_settings = [
+        AutomationTimingSettingResult(
+            key="runtime_start_time",
+            label="运行开始时间",
+            min_seconds=23 * 60,
+            max_seconds=23 * 60,
+        ),
+        AutomationTimingSettingResult(
+            key="runtime_end_time",
+            label="运行结束时间",
+            min_seconds=6 * 60,
+            max_seconds=6 * 60,
+        ),
+    ]
+    appium_manager = FakeAppiumServerManager()
+    waits = []
+    runner = SequencedRunner(
+        devices=devices,
+        api_client=api_client,  # type: ignore[arg-type]
+        publish_account_by_udid={},
+        poll_interval_seconds=1,
+        outside_runtime_window_poll_seconds=300,
+        max_workers=8,
+        appium_server_manager=appium_manager,  # type: ignore[arg-type]
+        appium_batch_size=2,
+        business_enabled=lambda: True,
+        current_minute_provider=lambda: 21 * 60,
+        run_results=[TaskWorkerRunResult(claimed_task=True)],
+    )
+
+    def fake_wait(seconds):
+        waits.append(seconds)
+        runner.stop_event.set()
+        return True
+
+    monkeypatch.setattr(runner.stop_event, "wait", fake_wait)
+
+    runner._run_batched()
+
+    assert waits == [300]
+    assert appium_manager.started == []
+    assert runner.run_order == []
+
+
 def test_device_round_respects_effective_slots() -> None:
     devices = [make_device(name=f"device_{i}", udid=f"udid-{i}") for i in range(1, 5)]
     appium_manager = FakeAppiumServerManager()

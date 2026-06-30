@@ -9,7 +9,7 @@ import { API_ENDPOINTS } from './endpoints'
 import { request } from './request'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const DEVICE_KEY = 'douyin_auto_mock_devices'
+const DEVICE_KEY = 'auto_fans_mock_devices'
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 const now = () => new Date().toISOString()

@@ -3,7 +3,7 @@ import { request } from './request'
 import type { AutomationRuntimeState, AutomationServiceStatus } from '../types/automationRuntime'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const RUNTIME_KEY = 'douyin_auto_mock_automation_runtime'
+const RUNTIME_KEY = 'auto_fans_mock_automation_runtime'
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 const now = () => new Date().toISOString()

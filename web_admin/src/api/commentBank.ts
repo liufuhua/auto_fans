@@ -12,7 +12,7 @@ import { API_ENDPOINTS } from './endpoints'
 import { request } from './request'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const COMMENT_BANK_KEY = 'douyin_auto_mock_comment_bank'
+const COMMENT_BANK_KEY = 'auto_fans_mock_comment_bank'
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 

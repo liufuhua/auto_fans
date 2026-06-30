@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -13,7 +14,6 @@ from env_check import build_runtime_env, format_check_result, run_environment_ch
 from service_status import all_required_running, collect_status, format_status, write_status_file
 
 
-WEB_URL = "http://127.0.0.1:5173"
 STARTUP_TIMEOUT_SECONDS = 90
 STATUS_INTERVAL_SECONDS = 2
 
@@ -26,6 +26,7 @@ class DesktopClient:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_path = self.log_dir / f"desktop_{stamp}.log"
         self.process: subprocess.Popen[str] | None = None
+        self.runtime_env: dict[str, str] | None = None
         self.window: webview.Window | None = None
         self.stop_requested = False
         self.finish_requested = False
@@ -89,6 +90,10 @@ class DesktopClient:
 
     def start_services(self) -> None:
         script = self.root / "scripts" / "start_all.ps1"
+        self.runtime_env = build_runtime_env()
+        for key in ("API_HOST", "API_PORT", "WEB_HOST", "WEB_PORT", "APPIUM_HOST", "APPIUM_PORT", "VITE_API_BASE_URL"):
+            if key in self.runtime_env:
+                os.environ[key] = self.runtime_env[key]
         command = [
             "powershell",
             "-NoProfile",
@@ -98,11 +103,12 @@ class DesktopClient:
             str(script),
         ]
         self.log(f"Starting services: {' '.join(command)}")
+        self.log(f"Runtime API: {self.runtime_env.get('VITE_API_BASE_URL', '-')}")
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         self.process = subprocess.Popen(
             command,
             cwd=str(self.root),
-            env=build_runtime_env(),
+            env=self.runtime_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -141,7 +147,7 @@ class DesktopClient:
         completed = subprocess.run(
             command,
             cwd=str(self.root),
-            env=build_runtime_env(),
+            env=self.runtime_env or build_runtime_env(),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -184,9 +190,10 @@ class DesktopClient:
         self.set_html("正在启动服务", "请稍等，客户端正在启动 API、Web、Appium 和业务客户端。")
         self.start_services()
         if self.wait_until_ready():
-            self.log(f"Loading web admin: {WEB_URL}")
+            web_url = self.web_url()
+            self.log(f"Loading web admin: {web_url}")
             if self.window:
-                self.window.load_url(WEB_URL)
+                self.window.load_url(web_url)
             return
 
         self.set_html("服务启动失败", f"请查看日志：<pre>{self.log_path}</pre>")
@@ -194,6 +201,12 @@ class DesktopClient:
 
     def on_closed(self) -> None:
         self.stop_requested = True
+
+    def web_url(self) -> str:
+        env = self.runtime_env or os.environ
+        host = env.get("WEB_HOST", "127.0.0.1")
+        port = env.get("WEB_PORT", "5173")
+        return f"http://{host}:{port}"
 
 
 def project_root() -> Path:

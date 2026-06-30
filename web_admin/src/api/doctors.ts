@@ -12,8 +12,8 @@ import { API_ENDPOINTS } from './endpoints'
 import { request } from './request'
 
 const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== 'false'
-const DOCTOR_KEY = 'douyin_auto_mock_doctors'
-const KEYWORD_KEY = 'douyin_auto_mock_doctor_keywords'
+const DOCTOR_KEY = 'auto_fans_mock_doctors'
+const KEYWORD_KEY = 'auto_fans_mock_doctor_keywords'
 
 const now = () => new Date().toISOString()
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
